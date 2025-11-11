@@ -25,6 +25,7 @@ import type {
   FlowSign,
 } from './types';
 import { makeNodeId, makeEdgeId } from './types';
+import { generateId } from '../geometry/geometry';
 
 /**
  * Result of an operation that creates a new node
@@ -40,18 +41,6 @@ export interface AddNodeResult {
 export interface CreateEdgeResult {
   graph: RiverGraphV2;
   edgeId: EdgeId;
-}
-
-/**
- * Generates a unique ID (UUID v4)
- * @ue_equivalent FGuid::NewGuid() in UE5
- */
-export function generateId(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
 }
 
 /**
