@@ -13,7 +13,7 @@
 ## 🎯 Общий прогресс
 
 - [x] **Фаза 1:** Core модуль (Node-Edge граф + операции)
-- [ ] **Фаза 2:** Геометрия и кэширование
+- [x] **Фаза 2:** Геометрия и кэширование
 - [ ] **Фаза 3:** UI интеграция
 - [ ] **Фаза 4:** Оптимизации (опционально)
 - [ ] **Фаза 5:** Полировка и документация
@@ -70,34 +70,34 @@
 
 ### 2.1 Базовая геометрия
 
-- [ ] Создать `src/core/geometry/geometry.ts`
-  - [ ] `distance(p1, p2)` - расстояние между точками
-  - [ ] `distanceToSegment(px, py, x1, y1, x2, y2)` - расстояние до отрезка
-  - [ ] `generateId()` - генератор UUID
+- [x] Создать `src/core/geometry/geometry.ts`
+  - [x] `distance(p1, p2)` - расстояние между точками
+  - [x] `distanceToSegment(px, py, x1, y1, x2, y2)` - расстояние до отрезка
+  - [x] `generateId()` - генератор UUID
 
 ### 2.2 Кривые с segIndexAt (P0 багфикс)
 
-- [ ] Создать `src/core/geometry/curves.ts`
-  - [ ] `getCurvePoints(controlPoints)` → `{ points, segIndexAt }`
+- [x] Создать `src/core/geometry/curves.ts`
+  - [x] `getCurvePoints(controlPoints)` → `{ points, segIndexAt }`
     - Catmull-Rom интерполяция
     - `segIndexAt[i]` = индекс контрольного сегмента для sample `i`
     - Формула: `segIndexAt[k] = Math.min(Math.floor((k - 1) / curveSegments), controlPoints.length - 2)`
-  - [ ] `buildCurveCache(controlPoints)` → `CurveCache`
+  - [x] `buildCurveCache(controlPoints)` → `CurveCache`
     - Возвращает `{ points, tangents, normals, curvature, segIndexAt }`
 
 ### 2.3 Frames (tangents, normals, curvature)
 
-- [ ] Создать `src/core/geometry/frames.ts`
-  - [ ] `computeTangents(points)` → `{vx, vy}[]`
-  - [ ] `computeNormals(tangents)` → `{x, y}[]`
-  - [ ] `computeCurvature(points)` → `number[]`
-  - [ ] `computeFrames(points)` → `{ tangents, normals, curvature }`
+- [x] Создать `src/core/geometry/frames.ts`
+  - [x] `computeTangents(points)` → `{vx, vy}[]`
+  - [x] `computeNormals(tangents)` → `{x, y}[]`
+  - [x] `computeCurvature(points)` → `number[]`
+  - [x] `computeFrames(points)` → `{ tangents, normals, curvature }`
 
 ### 2.4 Кэширование
 
-- [ ] Создать `src/core/geometry/cache.ts`
-  - [ ] `CurveCache` интерфейс
-  - [ ] `buildEdgeCache(graph)` → `Record<EdgeId, CurveCache>`
+- [x] Создать `src/core/geometry/cache.ts`
+  - [x] `CurveCache` интерфейс
+  - [x] `buildEdgeCache(graph)` → `Record<EdgeId, CurveCache>`
     - Пересчитывает кэш для всех edges
     - Вызывается один раз при изменении графа
 
@@ -269,6 +269,13 @@
 
 ## 🔄 История изменений
 
+### 2025-01-11 - Фаза 2 завершена
+- ✅ Создан `src/core/geometry/geometry.ts` с базовыми геометрическими функциями
+- ✅ Создан `src/core/geometry/curves.ts` с Catmull-Rom интерполяцией и segIndexAt (P0 bugfix!)
+- ✅ Создан `src/core/geometry/frames.ts` с вычислением Frenet фреймов
+- ✅ Создан `src/core/geometry/cache.ts` с системой кэширования геометрии edges
+- ✅ Рефакторинг operations.ts для использования общего generateId
+
 ### 2025-01-11 - Фаза 1 завершена
 - ✅ Создан `src/core/graph/types.ts` с полной системой типов Node-Edge
 - ✅ Создан `src/core/graph/validation.ts` с функциями валидации графа
@@ -301,4 +308,4 @@
 
 ## 🎯 Следующий шаг
 
-**Фаза 2.1:** Создание базовой геометрии (`src/core/geometry/geometry.ts`)
+**Фаза 3.1:** Создание GraphService адаптера (`src/services/GraphService.ts`)
