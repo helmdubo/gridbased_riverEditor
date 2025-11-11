@@ -5,9 +5,10 @@
  * Uses useRiverGraphV2 and useRiverRendererV2 with all P0 bugfixes included.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useRiverGraphV2 } from '@hooks/useRiverGraphV2';
 import { useRiverRendererV2 } from '@hooks/useRiverRendererV2';
+import { RiverOverlay } from './RiverEditor/RiverOverlay';
 import { DEFAULT_GRID_SIZE, DEFAULT_MAIN_RIVERBED_WIDTH, DEFAULT_RIVER_TYPE } from '@domain/constants';
 import type { RiverType } from '@domain/models/types';
 
@@ -24,15 +25,22 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   const [showFlowArrows, setShowFlowArrows] = useState(false);
   const [tributaryWidthPercent, setTributaryWidthPercent] = useState(50);
 
+  // Interaction state
+  const [hoveredPointId, setHoveredPointId] = useState<string | null>(null);
+  const [draggingPointId, setDraggingPointId] = useState<string | null>(null);
+  const overlayRef = useRef<SVGSVGElement>(null);
+
   // River graph state (V2)
   const {
     riverGraph,
     addPointToActiveEdge,
     selectedNodeId,
+    selectNode,
+    moveNode,
   } = useRiverGraphV2();
 
   // Renderer with geometry cache + P0 bugfixes
-  const { canvasRef, render } = useRiverRendererV2(
+  const { canvasRef, legacyGraph, render } = useRiverRendererV2(
     riverGraph,
     mainRiverbedWidth,
     cols,
@@ -76,6 +84,66 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     addPointToActiveEdge(x, y, tributaryWidthPercent);
     console.log('📊 Graph updated - nodes:', Object.keys(riverGraph.nodes).length, 'edges:', Object.keys(riverGraph.edges).length);
   };
+
+  // Node interaction handlers
+  const handlePointMouseDown = useCallback((pointId: string) => {
+    console.log('🖱️ Point mouse down:', pointId);
+    setDraggingPointId(pointId);
+    selectNode(pointId);
+  }, [selectNode]);
+
+  const handlePointClick = useCallback((e: React.MouseEvent, pointId: string) => {
+    e.stopPropagation();
+    console.log('🖱️ Point click:', pointId);
+    selectNode(pointId);
+  }, [selectNode]);
+
+  const handlePointDoubleClick = useCallback((e: React.MouseEvent, pointId: string) => {
+    e.stopPropagation();
+    console.log('🖱️ Point double click:', pointId);
+    // TODO: Delete node or other action
+  }, []);
+
+  const handleOverlayMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    if (!draggingPointId) return;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    console.log('🔄 Dragging node:', draggingPointId, 'to', { x, y });
+    moveNode(draggingPointId, x, y);
+  }, [draggingPointId, moveNode]);
+
+  const handleOverlayMouseUp = useCallback(() => {
+    if (draggingPointId) {
+      console.log('✅ Drag complete:', draggingPointId);
+      setDraggingPointId(null);
+    }
+  }, [draggingPointId]);
+
+  const handleOverlayMouseLeave = useCallback(() => {
+    if (draggingPointId) {
+      console.log('⚠️ Drag cancelled (mouse left canvas)');
+      setDraggingPointId(null);
+    }
+  }, [draggingPointId]);
+
+  // Tributary interaction (simplified for demo - not implemented yet)
+  const handleTributaryPointMouseDown = useCallback((_: string, __: string, ___: boolean) => {
+    // TODO: Implement tributary interaction
+  }, []);
+
+  const handleTributaryPointClick = useCallback((_e: React.MouseEvent, __: string, ___: string) => {
+    // TODO: Implement tributary interaction
+  }, []);
+
+  const handleTributaryPointDoubleClick = useCallback((_e: React.MouseEvent, __: string, ___: string) => {
+    // TODO: Implement tributary interaction
+  }, []);
 
   return (
     <div style={{
@@ -186,17 +254,43 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
         </ul>
       </div>
 
-      {/* Canvas */}
-      <canvas
-        ref={canvasRef}
-        onClick={handleCanvasClick}
-        style={{
-          border: '2px solid #333',
-          cursor: 'crosshair',
-          borderRadius: '4px',
-          boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
-        }}
-      />
+      {/* Canvas + Overlay */}
+      <div style={{ position: 'relative', display: 'inline-block' }}>
+        <canvas
+          ref={canvasRef}
+          onClick={handleCanvasClick}
+          style={{
+            border: '2px solid #333',
+            cursor: draggingPointId ? 'grabbing' : 'crosshair',
+            borderRadius: '4px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
+            display: 'block',
+          }}
+        />
+
+        <RiverOverlay
+          overlayRef={overlayRef}
+          width={cols * gridSize}
+          height={rows * gridSize}
+          riverGraph={legacyGraph}
+          activeSplineId="main"
+          selectedPointId={selectedNodeId}
+          hoveredPointId={hoveredPointId}
+          hoveredTributaryId={null}
+          hoveredTributaryPointId={null}
+          snapTargetPointId={null}
+          insertPointPreview={null}
+          onMouseMove={handleOverlayMouseMove}
+          onMouseUp={handleOverlayMouseUp}
+          onMouseLeave={handleOverlayMouseLeave}
+          onPointMouseDown={handlePointMouseDown}
+          onPointClick={handlePointClick}
+          onPointDoubleClick={handlePointDoubleClick}
+          onTributaryPointMouseDown={handleTributaryPointMouseDown}
+          onTributaryPointClick={handleTributaryPointClick}
+          onTributaryPointDoubleClick={handleTributaryPointDoubleClick}
+        />
+      </div>
     </div>
   );
 };

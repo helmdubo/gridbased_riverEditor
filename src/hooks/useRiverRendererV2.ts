@@ -162,6 +162,7 @@ export const useRiverRendererV2 = (
   return {
     canvasRef,
     geometryCache,
+    legacyGraph, // Export for overlay rendering
     curveData,
     flowField,
     computeFlowField,
