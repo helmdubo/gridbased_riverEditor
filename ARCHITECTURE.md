@@ -1,354 +1,398 @@
 # Архитектура проекта: Grid-Based River Editor
 
-## Обзор
+## 🎯 Цель проекта
 
-Проект организован по принципу **многослойной архитектуры** (Layered Architecture) с четким разделением ответственности между слоями. Это обеспечивает:
+**Web-прототип инструмента редактирования рек для миграции в Unreal Engine 5.6**
 
-- ✅ **Модульность** - легко заменять и тестировать отдельные компоненты
-- ✅ **Переиспользуемость** - логика не привязана к UI
-- ✅ **Масштабируемость** - легко добавлять новые функции
-- ✅ **Тестируемость** - каждый слой можно тестировать независимо
+Этот проект является прототипом для быстрой итерации с AI. Финальная цель - перенос в UE5.6 как Scriptable Tool на Blueprints.
 
-## Структура проекта
+### Ключевые требования:
+
+✅ **UE-Ready архитектура** - Node-Edge граф, чистые функции
+✅ **Минимальные React-зависимости** - легкая миграция
+✅ **Простота > Производительность** - это прототип, не production
+✅ **Документированность** - каждая функция = будущий Blueprint node
+
+---
+
+## 🏗️ Архитектура: Node-Edge Graph Model
+
+### Переход от RiverGraph к Node-Edge модели
+
+**Старая модель (до рефакторинга):**
+```typescript
+interface RiverGraph {
+  mainRiver: RiverPoint[];           // полилиния
+  tributaries: Map<string, Tributary>; // притоки с parentPointId
+}
+```
+
+**Новая модель (UE-Ready):**
+```typescript
+interface RiverGraphV2 {
+  nodes: Record<NodeId, Node>;    // все вершины
+  edges: Record<EdgeId, Edge>;    // все рёбра (main + tributaries)
+  mainEdgeId: EdgeId | null;      // ID главной реки
+}
+
+interface Node {
+  id: NodeId;
+  x: number;
+  y: number;
+}
+
+interface Edge {
+  id: EdgeId;
+  kind: 'main' | 'tributary';
+  nodeIds: NodeId[];              // путь по узлам
+  widthMode: WidthAbs | WidthRel;
+  flowSign: 1 | -1;               // направление потока
+  parentJunction?: NodeId;        // для притоков
+  isDetached?: boolean;
+}
+```
+
+### Почему Node-Edge?
+
+| Критерий | Старая модель | Node-Edge модель |
+|----------|---------------|------------------|
+| **UE5 соответствие** | ❌ Нет | ✅ Прямое (EdGraph) |
+| **USplineComponent** | ❌ Переделка | ✅ nodeIds → Spline points |
+| **Snap к сплайну** | ❌ Индексы ломаются | ✅ Вставка Node между i и i+1 |
+| **Junction точки** | ❌ Неявные (parentPointId) | ✅ Явные (Node с ≥2 edges) |
+| **Undo/Redo** | ❌ Сложно | ✅ Стек состояний графа |
+| **Валидация** | ❌ Ручная | ✅ Инварианты графа |
+
+---
+
+## 📂 Структура проекта
 
 ```
 src/
-├── domain/                    # Доменный слой (Domain Layer)
-│   ├── models/               # Модели данных
-│   │   ├── types.ts         # Все типы данных
-│   │   └── index.ts
-│   ├── constants/           # Константы приложения
-│   │   ├── riverConstants.ts
-│   │   ├── marchingSquares.ts
-│   │   └── index.ts
-│   └── utils/              # Утилиты для работы с данными
-│       ├── geometry.ts     # Геометрические вычисления
-│       ├── curves.ts       # Работа с кривыми (сплайны)
-│       ├── riverValidation.ts  # Валидация графа реки
-│       └── index.ts
+├── core/                          # 🎯 ПЕРЕНОСИТСЯ В UE 1:1
+│   ├── graph/
+│   │   ├── types.ts              # Node, Edge, RiverGraphV2
+│   │   ├── operations.ts         # Чистые функции для операций
+│   │   └── validation.ts         # Инварианты графа
+│   ├── geometry/
+│   │   ├── curves.ts             # Catmull-Rom → USplineComponent
+│   │   ├── geometry.ts           # Расстояния, проекции
+│   │   └── frames.ts             # Tangents, normals, curvature
+│   └── flow/
+│       ├── flowField.ts          # Расчёт направления/скорости
+│       └── sdf.ts                # SDF для ширины русла
 │
-├── services/               # Сервисный слой (Service Layer)
-│   ├── RiverGraphService.ts    # Управление графом реки
-│   ├── FlowService.ts          # Расчет потоков воды
-│   ├── RenderService.ts        # Рендеринг на canvas
-│   └── index.ts
+├── services/                      # 🔄 ЧАСТИЧНО ПЕРЕНОСИТСЯ
+│   ├── GraphService.ts           # → Blueprint Function Library
+│   ├── FlowService.ts            # → Blueprint Function Library
+│   └── RenderService.ts          # ❌ НЕ ПЕРЕНОСИТСЯ (UE rendering)
 │
-├── hooks/                  # Слой React Hooks
-│   ├── useRiverGraph.ts        # Управление состоянием графа
-│   ├── useRiverInteractions.ts # Обработка взаимодействий
-│   ├── useRiverRenderer.ts     # Управление рендерингом
-│   └── index.ts
+├── hooks/                         # ❌ НЕ ПЕРЕНОСИТСЯ
+│   └── useRiverGraph.ts          # React специфика
 │
-├── components/            # UI слой (Presentation Layer)
-│   ├── App.tsx           # Главный компонент
-│   ├── SetupScreen/      # Экран настройки
-│   │   └── SetupScreen.tsx
-│   ├── RiverEditor/      # Основной редактор
-│   │   ├── RiverEditor.tsx
-│   │   ├── RiverCanvas.tsx
-│   │   ├── RiverOverlay.tsx
-│   │   └── PointMarker.tsx
-│   ├── Controls/         # Компоненты управления
-│   │   ├── MainControls.tsx
-│   │   ├── FlowControls.tsx
-│   │   ├── RiverTypeControls.tsx
-│   │   └── CurveControls.tsx
-│   └── Instructions/     # Инструкции
-│       └── Instructions.tsx
-│
-└── main.tsx              # Точка входа
+└── components/                    # ❌ НЕ ПЕРЕНОСИТСЯ
+    └── RiverEditor/              # Будет Slate/UMG в UE
 ```
 
-## Слои архитектуры
+### Что переносится в UE5.6?
 
-### 1. Domain Layer (Доменный слой)
+#### ✅ Core модуль (100% перенос)
 
-**Назначение**: Чистая бизнес-логика без зависимостей от React или UI.
-
-**Содержит**:
-- **Models** (`models/types.ts`) - Типы данных:
-  - `Point`, `RiverPoint` - точки
-  - `Tributary` - притоки
-  - `RiverGraph` - граф реки
-  - `CurveCache`, `FlowDirection` и др.
-
-- **Constants** - Константы:
-  - `riverConstants.ts` - настройки реки (ширина, снеппинг, цвета)
-  - `marchingSquares.ts` - таблица Marching Squares для контуров
-
-- **Utils** - Утилиты:
-  - `geometry.ts` - геометрические вычисления (расстояния, проекции)
-  - `curves.ts` - интерполяция кривых (Catmull-Rom сплайны)
-  - `riverValidation.ts` - валидация графа реки
-
-**Принципы**:
-- ❌ Нет зависимостей от React
-- ❌ Нет работы с DOM/Canvas
-- ✅ Чистые функции
-- ✅ Типизация TypeScript
-
-### 2. Service Layer (Сервисный слой)
-
-**Назначение**: Бизнес-логика для работы с доменными моделями.
-
-**Содержит**:
-
-- **RiverGraphService** - Управление графом реки:
-  - Добавление/удаление точек
-  - Создание притоков
-  - Перемещение точек
-  - Снеппинг притоков
-  - Разделение сегментов
-
-- **FlowService** - Расчет потоков воды:
-  - Расчет направления потока
-  - Расчет скорости
-  - Учет кривизны и сужений
-  - Сглаживание полей
-
-- **RenderService** - Рендеринг:
-  - Отрисовка сетки
-  - Marching Squares для контуров
-  - Визуализация потоков
-  - Отрисовка сплайнов
-
-**Принципы**:
-- ❌ Нет прямой работы с React состоянием
-- ✅ Статические методы (class-based services)
-- ✅ Чистые функции где возможно
-- ✅ Использует только Domain Layer
-
-### 3. Hooks Layer (Слой React Hooks)
-
-**Назначение**: Интеграция сервисов с React компонентами.
-
-**Содержит**:
-
-- **useRiverGraph** - Управление состоянием графа:
-  - State: `riverGraph`, `activeSplineId`, `selectedPointId`
-  - Actions: add/delete/move points, manage tributaries
-  - Использует `RiverGraphService`
-
-- **useRiverInteractions** - Обработка взаимодействий:
-  - State: hover, drag, snap состояния
-  - Logic: обработка наведения, снеппинга, перетаскивания
-
-- **useRiverRenderer** - Управление рендерингом:
-  - Ref на canvas
-  - Координация `RenderService` и `FlowService`
-  - Перерисовка при изменении данных
-
-**Принципы**:
-- ✅ Custom React hooks
-- ✅ Инкапсуляция логики состояния
-- ✅ Использует Service Layer
-- ✅ Возвращает состояние и callbacks
-
-### 4. Presentation Layer (UI слой)
-
-**Назначение**: Визуальное представление и пользовательский интерфейс.
-
-**Содержит**:
-
-- **App** - Главный компонент, управление экранами
-- **SetupScreen** - Экран настройки размеров сетки
-- **RiverEditor** - Основной редактор:
-  - Координирует все hooks
-  - Обрабатывает события
-  - Управляет UI параметрами
-- **RiverCanvas** - Canvas для рендеринга
-- **RiverOverlay** - SVG overlay для интерактивных элементов
-- **PointMarker** - Маркеры точек
-- **Controls** - Компоненты управления (слайдеры, чекбоксы)
-- **Instructions** - Инструкции
-
-**Принципы**:
-- ✅ Presentational components
-- ✅ Минимум логики
-- ✅ Используют hooks для доступа к данным
-- ✅ Event handlers передаются через props
-
-## Поток данных
-
-```
-User Interaction (UI Layer)
-    ↓
-Event Handlers (Presentation Layer)
-    ↓
-Hooks (Hooks Layer)
-    ↓
-Services (Service Layer)
-    ↓
-Domain Models & Utils (Domain Layer)
-    ↓
-Updated State → Re-render UI
+**Типы:**
+```typescript
+// TypeScript → C++/Blueprint
+type NodeId = string;          → FGuid
+interface Node { x, y }        → FVector(X, Y, 0)
+interface Edge { nodeIds[] }   → TArray<FGuid>
 ```
 
-## Пример: Добавление точки к реке
+**Операции:**
+```typescript
+// TypeScript → Blueprint Function Library
+function addNode(graph, x, y): {graph, nodeId}
+// ↓
+UFUNCTION(BlueprintCallable)
+static FRiverGraph AddNode(const FRiverGraph& Graph, FVector Location);
+```
+
+**Геометрия:**
+```typescript
+// TypeScript → UE Native
+getCurvePoints() → USplineComponent::GetLocationAtDistanceAlongSpline()
+computeCurveFrames() → GetTangent/GetRightVector At SplinePoint
+```
+
+#### 🔄 Services (адаптация)
 
 ```typescript
-// 1. User clicks on canvas
-<RiverCanvas onClick={handleCanvasClick} />
+// Чистые функции переносятся как Function Library
+GraphService::splitEdge() → URiverGraphLibrary::SplitEdge()
 
-// 2. Event handler в RiverEditor
-const handleCanvasClick = (e) => {
-  const { x, y } = getCoordinates(e);
-  addPointToActiveSpline(x, y, tributaryWidthPercent);
-  //    ↑ hook function
-};
+// Rendering НЕ переносится - UE делает по-другому
+RenderService → Spline Mesh Components + Landscape
+```
 
-// 3. Hook (useRiverGraph)
-const addPointToActiveSpline = (x, y, width) => {
-  const result = RiverGraphService.addPointToMainRiver(
-    riverGraph, x, y, selectedPointId
-  );
-  //    ↑ service call
+#### ❌ UI слой (не переносится)
 
-  if (result) {
-    setRiverGraph(result.graph);  // Update state
-    //    ↑ React state update
+- React hooks → Blueprint variables + events
+- Canvas rendering → Spline Meshes + PCG
+- SVG overlay → Slate widgets в Editor Mode
+
+---
+
+## 🔧 Принципы разработки (UE-Ready)
+
+### 1. Чистые функции > Stateful логика
+
+**❌ Плохо (не перенесётся):**
+```typescript
+class GraphManager {
+  private graph: RiverGraphV2;
+
+  addNode(x, y) {
+    this.graph = { ...this.graph, ... }; // mutating state
   }
-};
+}
+```
 
-// 4. Service (RiverGraphService)
-static addPointToMainRiver(graph, x, y, selectedId) {
-  // Business logic
-  const newPoint = { x, y, id: generateId() };
-  //                              ↑ domain util
-
-  return {
-    graph: { ...graph, mainRiver: [...graph.mainRiver, newPoint] },
-    newPointId: newPoint.id
-  };
+**✅ Хорошо (легко станет Blueprint):**
+```typescript
+namespace GraphOperations {
+  export function addNode(
+    graph: RiverGraphV2,
+    x: number,
+    y: number
+  ): { graph: RiverGraphV2; nodeId: NodeId } {
+    // pure function, returns new graph
+  }
 }
 
-// 5. State update triggers re-render
-// useRiverRenderer hook calls RenderService
-// Canvas is updated
+// В UE:
+// UFUNCTION(BlueprintPure)
+// static FRiverGraph AddNode(const FRiverGraph& Graph, FVector Location);
 ```
 
-## Преимущества архитектуры
+### 2. Документация = Blueprint комментарии
 
-### 1. Разделение ответственности
-- Domain = что
-- Services = как
-- Hooks = когда
-- UI = где/визуально
-
-### 2. Тестируемость
+**Каждая функция должна иметь:**
 ```typescript
-// Domain utils - unit tests
-test('distanceToCurve calculates correctly', () => {
-  const result = distanceToCurve(10, 10, curve);
-  expect(result).toBe(5);
-});
-
-// Services - integration tests
-test('RiverGraphService adds point correctly', () => {
-  const result = RiverGraphService.addPointToMainRiver(graph, 10, 20, null);
-  expect(result.graph.mainRiver.length).toBe(1);
-});
-
-// Hooks - React testing library
-test('useRiverGraph manages state', () => {
-  const { result } = renderHook(() => useRiverGraph());
-  act(() => result.current.addPointToActiveSpline(10, 20, 50));
-  expect(result.current.riverGraph.mainRiver.length).toBe(1);
-});
+/**
+ * Adds a new node to the graph at specified location
+ *
+ * @param graph - Current graph state (const)
+ * @param x - X coordinate in world space
+ * @param y - Y coordinate in world space
+ * @returns New graph with added node + new node ID
+ *
+ * @pure Yes
+ * @ue_equivalent URiverGraphLibrary::AddNode
+ */
+export function addNode(graph: RiverGraphV2, x: number, y: number) { }
 ```
 
-### 3. Переиспользуемость
-- Domain utils можно использовать в других проектах
-- Services не зависят от React
-- Hooks можно использовать в разных UI компонентах
+### 3. Избегать React специфики в core
 
-### 4. Масштабируемость
-- Легко добавить новый тип реки → Domain + Service
-- Легко добавить новый UI → новый Component
-- Легко изменить рендеринг → только RenderService
-
-## Технологии
-
-- **React 18** - UI framework
-- **TypeScript** - Type safety
-- **Vite** - Build tool
-- **Canvas API** - Rendering
-- **SVG** - Interactive overlay
-
-## Path Aliases
-
-Проект использует path aliases для чистых импортов:
-
+**❌ Плохо:**
 ```typescript
-import { Point } from '@domain/models/types';
-import { RiverGraphService } from '@services';
-import { useRiverGraph } from '@hooks';
-import { RiverEditor } from '@components/RiverEditor/RiverEditor';
+const cache = useMemo(() => buildCache(graph), [graph]); // React!
 ```
 
-Настройка в `tsconfig.json`:
-```json
-{
-  "compilerOptions": {
-    "paths": {
-      "@/*": ["src/*"],
-      "@domain/*": ["src/domain/*"],
-      "@services/*": ["src/services/*"],
-      "@hooks/*": ["src/hooks/*"],
-      "@components/*": ["src/components/*"]
+**✅ Хорошо:**
+```typescript
+// Чистая функция, кэш снаружи
+function buildCache(graph: RiverGraphV2): CurveCache { }
+
+// В UE: кэш в UPROPERTY, dirty flag для перерасчёта
+```
+
+### 4. Типы данных = Blueprint Structs
+
+**TypeScript типы проектируются под USTRUCT:**
+```typescript
+interface Edge {
+  id: EdgeId;                    // FGuid
+  kind: 'main' | 'tributary';   // UENUM
+  nodeIds: NodeId[];            // TArray<FGuid>
+  flowSign: 1 | -1;             // int32
+}
+
+// В UE станет:
+// USTRUCT(BlueprintType)
+// struct FRiverEdge { ... };
+```
+
+---
+
+## 🎯 Критические багфиксы (P0)
+
+Эти баги исправляются сразу в Node-Edge структуре:
+
+### 1. FlowSign как явное поле
+
+**Проблема:** Направление потока определялось неявно по порядку точек.
+
+**Решение:** Добавить `flowSign: 1 | -1` в Edge.
+- Main edge: `flowSign = 1` (от истока к устью)
+- Tributary: `flowSign = -1` (от истока к устью, но устье = junction)
+
+### 2. segIndexAt для правильного snap
+
+**Проблема:** `Math.floor(sampleIdx / curveSegments)` давал off-by-one из-за начального push.
+
+**Решение:** Кэш кривой хранит `segIndexAt: Uint16Array` - для каждого sample → индекс контрольного сегмента.
+
+### 3. Pointer events + capture
+
+**Проблема:** Drag терялся при выходе мыши за canvas (особенно Safari).
+
+**Решение:**
+- SVG с `pointerEvents: 'auto'`
+- `setPointerCapture()` / `releasePointerCapture()`
+
+### 4. devicePixelRatio
+
+**Проблема:** Размытость на Retina дисплеях.
+
+**Решение:** Масштабировать canvas под DPR.
+
+---
+
+## 🚀 Оптимизации (если нужны для тестирования)
+
+### Кэширование кривых
+
+**Текущая проблема:** getCurvePoints вызывается многократно в каждом кадре.
+
+**Решение:**
+```typescript
+interface CurveCache {
+  points: Point[];
+  tangents: {vx, vy}[];
+  normals: Point[];
+  curvature: number[];
+  segIndexAt: Uint16Array; // для snap
+}
+
+// Кэш пересчитывается только при изменении графа
+const cache = buildCurveCache(graph); // один раз
+```
+
+### rAF scheduling
+
+**Проблема:** Slider изменения → 60 setState/сек → 60 перерисовок/сек.
+
+**Решение:** Coalescing в requestAnimationFrame - максимум 1 перерисовка/кадр.
+
+### widthFromMask (быстрая версия SDF)
+
+**Проблема:** widthAlongNormal_precise делает дорогой march с distanceToCurve в цикле.
+
+**Решение:** Семплировать дискретную waterMask вместо вызова distanceToCurve - x10 быстрее.
+
+---
+
+## 🔄 Миграция в UE5.6 (когда придёт время)
+
+### Этап 1: Blueprint Function Library
+
+```cpp
+UCLASS()
+class URiverGraphLibrary : public UBlueprintFunctionLibrary {
+    GENERATED_BODY()
+
+    UFUNCTION(BlueprintCallable, Category="River|Graph")
+    static FRiverGraph AddNode(const FRiverGraph& Graph, FVector Location);
+
+    UFUNCTION(BlueprintCallable, Category="River|Graph")
+    static FRiverGraph SplitEdge(
+        const FRiverGraph& Graph,
+        FGuid EdgeID,
+        FGuid NewNodeID,
+        int32 InsertAtIndex
+    );
+
+    // ... все операции из GraphOperations
+};
+```
+
+### Этап 2: Spline Component интеграция
+
+```cpp
+// Конвертация Edge → USplineComponent
+USplineComponent* EdgeToSpline(const FRiverEdge& Edge) {
+    USplineComponent* Spline = NewObject<USplineComponent>();
+
+    for (const FGuid& NodeID : Edge.NodeIDs) {
+        FVector Location = Graph.Nodes[NodeID].Location;
+        Spline->AddSplinePoint(Location, ESplineCoordinateSpace::World);
     }
-  }
+
+    return Spline;
 }
 ```
 
-## Принципы разработки
+### Этап 3: Editor Mode Tool
 
-### SOLID Principles
-
-1. **Single Responsibility** - каждый модуль отвечает за одну вещь
-2. **Open/Closed** - открыт для расширения, закрыт для модификации
-3. **Liskov Substitution** - услуги взаимозаменяемы
-4. **Interface Segregation** - узкие интерфейсы
-5. **Dependency Inversion** - зависимость от абстракций
-
-### Clean Architecture
-
-- Зависимости направлены внутрь (к Domain)
-- Domain не зависит ни от чего
-- UI зависит от всех слоев, но другие слои не знают о UI
-
-## Расширение функциональности
-
-### Добавление нового типа реки
-
-1. Добавить тип в `domain/models/types.ts`:
-```typescript
-export type RiverType = '...' | 'Новый тип';
-```
-
-2. Добавить константу в `domain/constants/riverConstants.ts`:
-```typescript
-export const RIVER_TYPES = {
-  // ...
-  'Новый тип': 3.5
+```cpp
+UCLASS()
+class URiverEditorMode : public UEdMode {
+    // Интерактивное размещение nodes через viewport
+    // Snap визуализация
+    // Properties panel для настройки
 };
 ```
 
-3. UI автоматически обновится (RiverTypeControls использует `Object.keys(RIVER_TYPES)`)
+### Этап 4: PCG Integration
 
-### Добавление нового алгоритма рендеринга
+```cpp
+UCLASS()
+class URiverPCGNode : public UPCGSettings {
+    // Input: FRiverGraph
+    // Output: PCG Points для generation (камни, растительность вдоль реки)
+};
+```
 
-1. Создать новый метод в `services/RenderService.ts`
-2. Вызвать его из `hooks/useRiverRenderer.ts`
-3. UI не требует изменений
+---
 
-## Заключение
+## 📊 Текущее состояние vs Целевое
 
-Эта архитектура обеспечивает:
-- ✅ Чистый, поддерживаемый код
-- ✅ Легкое тестирование
-- ✅ Простое расширение
-- ✅ Четкое разделение ответственности
-- ✅ Масштабируемость проекта
+| Компонент | Текущее | Целевое (после рефакторинга) | UE5.6 эквивалент |
+|-----------|---------|------------------------------|------------------|
+| **Модель данных** | RiverGraph (main+tribs) | RiverGraphV2 (nodes+edges) | FRiverGraph (TMap) |
+| **Операции** | RiverGraphService (class) | GraphOperations (pure fn) | URiverGraphLibrary |
+| **Геометрия** | getCurvePoints (custom) | getCurvePoints + cache | USplineComponent |
+| **FlowSign** | ❌ Неявный (порядок точек) | ✅ Явный (flowSign field) | int32 FlowSign |
+| **Snap** | ❌ Ломается (off-by-one) | ✅ segIndexAt в кэше | GetInputKeyClosest |
+| **Рендеринг** | Canvas API | Canvas API | Spline Mesh + Landscape |
+| **UI** | React components | React components | Slate widgets |
 
-Следуйте принципам архитектуры при добавлении новой функциональности!
+---
+
+## 🎓 Философия проекта
+
+**Это не production приложение. Это "executable specification" для UE5.6 tool.**
+
+### Критерии успеха:
+
+✅ Логически корректный (баги исправлены)
+✅ Архитектурно простой (Node-Edge + чистые функции)
+✅ Хорошо документированный (каждая функция → Blueprint)
+❌ ~~Ultra-optimized~~ (UE сделает это за нас)
+❌ ~~Production-ready UI~~ (будет Slate в UE)
+
+### Что важно:
+
+- ✅ **Правильность алгоритмов** - они перенесутся
+- ✅ **Чистота функций** - они станут Blueprint nodes
+- ✅ **Простота кода** - легко понять и переписать
+- ❌ **React performance** - не перенесётся
+- ❌ **Pixel-perfect UI** - будет другой в UE
+
+---
+
+## 📚 Ссылки
+
+- [UE5 Spline Component](https://docs.unrealengine.com/5.0/en-US/spline-components-in-unreal-engine/)
+- [UE5 PCG](https://docs.unrealengine.com/5.0/en-US/procedural-content-generation-overview/)
+- [UE5 Scriptable Tools](https://docs.unrealengine.com/5.0/en-US/editor-utility-blueprints/)
+- [Blueprint Function Library](https://docs.unrealengine.com/5.0/en-US/blueprint-function-libraries-in-unreal-engine/)
