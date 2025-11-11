@@ -198,8 +198,10 @@ export function createEdge(
   width: Width,
   flowSign: FlowSign = 1
 ): CreateEdgeResult {
-  if (nodeIds.length < 2) {
-    throw new Error('Cannot create edge with less than 2 nodes');
+  // Note: Allow edge with 1 node for initial creation (UX convenience)
+  // Curve rendering will require at least 2 nodes, but graph can store 1-node edge
+  if (nodeIds.length < 1) {
+    throw new Error('Cannot create edge with no nodes');
   }
 
   const newGraph = cloneGraph(graph);
