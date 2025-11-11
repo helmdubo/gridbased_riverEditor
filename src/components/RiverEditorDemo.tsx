@@ -27,7 +27,10 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
 
   // Interaction state
   const [hoveredPointId, setHoveredPointId] = useState<string | null>(null);
+  const [hoveredTributaryId, setHoveredTributaryId] = useState<string | null>(null);
+  const [hoveredTributaryPointId, setHoveredTributaryPointId] = useState<string | null>(null);
   const [draggingPointId, setDraggingPointId] = useState<string | null>(null);
+  const [draggingTributaryInfo, setDraggingTributaryInfo] = useState<{ id: string; pointId: string; isMouth: boolean } | null>(null);
   const overlayRef = useRef<SVGSVGElement>(null);
 
   // River graph state (V2)
@@ -100,13 +103,12 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
 
   const handlePointDoubleClick = useCallback((e: React.MouseEvent, pointId: string) => {
     e.stopPropagation();
-    console.log('🖱️ Point double click:', pointId);
-    // TODO: Delete node or other action
+    console.log('🗑️ Delete node:', pointId);
+    // TODO: Implement deleteNode in useRiverGraphV2
+    // deleteNode(pointId);
   }, []);
 
   const handleOverlayMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
-    if (!draggingPointId) return;
-
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -114,35 +116,92 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    console.log('🔄 Dragging node:', draggingPointId, 'to', { x, y });
-    moveNode(draggingPointId, x, y);
-  }, [draggingPointId, moveNode]);
+    // Update hover state when not dragging
+    if (!draggingPointId && !draggingTributaryInfo) {
+      let found = false;
+
+      // Check main river points
+      legacyGraph.mainRiver.forEach((p) => {
+        if (!found && Math.hypot(p.x - x, p.y - y) < 15) {
+          setHoveredPointId(p.id);
+          setHoveredTributaryId(null);
+          setHoveredTributaryPointId(null);
+          found = true;
+        }
+      });
+
+      // Check tributary points
+      if (!found) {
+        legacyGraph.tributaries.forEach((trib, id) => {
+          trib.points.forEach((p) => {
+            if (!found && Math.hypot(p.x - x, p.y - y) < 15) {
+              setHoveredPointId(null);
+              setHoveredTributaryId(id);
+              setHoveredTributaryPointId(p.id);
+              found = true;
+            }
+          });
+        });
+      }
+
+      // Clear hover if nothing found
+      if (!found) {
+        setHoveredPointId(null);
+        setHoveredTributaryId(null);
+        setHoveredTributaryPointId(null);
+      }
+    }
+
+    // Handle dragging main river point
+    if (draggingPointId) {
+      const newX = Math.max(0, Math.min(cols * gridSize, x));
+      const newY = Math.max(0, Math.min(rows * gridSize, y));
+      moveNode(draggingPointId, newX, newY);
+    }
+
+    // Handle dragging tributary point
+    if (draggingTributaryInfo) {
+      const newX = Math.max(0, Math.min(cols * gridSize, x));
+      const newY = Math.max(0, Math.min(rows * gridSize, y));
+      // TODO: Move tributary node (need to implement in useRiverGraphV2)
+      console.log('🔄 Dragging tributary node:', draggingTributaryInfo, 'to', { x: newX, y: newY });
+    }
+  }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraph, cols, gridSize]);
 
   const handleOverlayMouseUp = useCallback(() => {
-    if (draggingPointId) {
-      console.log('✅ Drag complete:', draggingPointId);
+    if (draggingPointId || draggingTributaryInfo) {
+      console.log('✅ Drag complete');
       setDraggingPointId(null);
+      setDraggingTributaryInfo(null);
     }
-  }, [draggingPointId]);
+  }, [draggingPointId, draggingTributaryInfo]);
 
   const handleOverlayMouseLeave = useCallback(() => {
-    if (draggingPointId) {
+    if (draggingPointId || draggingTributaryInfo) {
       console.log('⚠️ Drag cancelled (mouse left canvas)');
       setDraggingPointId(null);
+      setDraggingTributaryInfo(null);
     }
-  }, [draggingPointId]);
+  }, [draggingPointId, draggingTributaryInfo]);
 
-  // Tributary interaction (simplified for demo - not implemented yet)
-  const handleTributaryPointMouseDown = useCallback((_: string, __: string, ___: boolean) => {
-    // TODO: Implement tributary interaction
-  }, []);
+  // Tributary interaction
+  const handleTributaryPointMouseDown = useCallback((id: string, pointId: string, isMouth: boolean) => {
+    console.log('🖱️ Tributary point mouse down:', { id, pointId, isMouth });
+    setDraggingTributaryInfo({ id, pointId, isMouth });
+    selectNode(pointId);
+  }, [selectNode]);
 
-  const handleTributaryPointClick = useCallback((_e: React.MouseEvent, __: string, ___: string) => {
-    // TODO: Implement tributary interaction
-  }, []);
+  const handleTributaryPointClick = useCallback((e: React.MouseEvent, id: string, pointId: string) => {
+    e.stopPropagation();
+    console.log('🖱️ Tributary point click:', { id, pointId });
+    selectNode(pointId);
+  }, [selectNode]);
 
-  const handleTributaryPointDoubleClick = useCallback((_e: React.MouseEvent, __: string, ___: string) => {
-    // TODO: Implement tributary interaction
+  const handleTributaryPointDoubleClick = useCallback((e: React.MouseEvent, id: string, pointId: string) => {
+    e.stopPropagation();
+    console.log('🗑️ Delete tributary node:', { id, pointId });
+    // TODO: Implement deleteTributaryNode in useRiverGraphV2
+    // deleteTributaryNode(id, pointId);
   }, []);
 
   return (
@@ -261,7 +320,11 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
           onClick={handleCanvasClick}
           style={{
             border: '2px solid #333',
-            cursor: draggingPointId ? 'grabbing' : 'crosshair',
+            cursor: (draggingPointId || draggingTributaryInfo)
+              ? 'grabbing'
+              : (hoveredPointId || hoveredTributaryPointId)
+                ? 'grab'
+                : 'crosshair',
             borderRadius: '4px',
             boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
             display: 'block',
@@ -276,8 +339,8 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
           activeSplineId="main"
           selectedPointId={selectedNodeId}
           hoveredPointId={hoveredPointId}
-          hoveredTributaryId={null}
-          hoveredTributaryPointId={null}
+          hoveredTributaryId={hoveredTributaryId}
+          hoveredTributaryPointId={hoveredTributaryPointId}
           snapTargetPointId={null}
           insertPointPreview={null}
           onMouseMove={handleOverlayMouseMove}
