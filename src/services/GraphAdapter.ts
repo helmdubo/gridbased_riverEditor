@@ -24,9 +24,20 @@ export function convertToLegacyFormat(
   const mainRiver: RiverPoint[] = [];
   const tributaries = new Map<string, Tributary>();
 
+  console.log('🔄 Converting GraphV2:', {
+    nodes: Object.keys(graphV2.nodes).length,
+    edges: Object.keys(graphV2.edges).length,
+    mainEdgeId: graphV2.mainEdgeId,
+  });
+
   // Convert main river
   const mainEdge = graphV2.mainEdgeId ? graphV2.edges[graphV2.mainEdgeId] : null;
   if (mainEdge) {
+    console.log('📍 Main edge found:', {
+      id: mainEdge.id,
+      nodeIds: mainEdge.nodeIds.length,
+    });
+
     // Get control points for main river
     for (const nodeId of mainEdge.nodeIds) {
       const node = graphV2.nodes[nodeId];
@@ -38,6 +49,8 @@ export function convertToLegacyFormat(
         });
       }
     }
+  } else {
+    console.log('⚠️ No main edge found');
   }
 
   // Convert tributaries
@@ -73,6 +86,11 @@ export function convertToLegacyFormat(
       isDetached: edge.isDetached,
     });
   }
+
+  console.log('✅ Converted to legacy format:', {
+    mainRiverPoints: mainRiver.length,
+    tributariesCount: tributaries.size,
+  });
 
   return {
     mainRiver,

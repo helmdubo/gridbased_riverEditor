@@ -30,8 +30,11 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
    */
   const addPointToActiveEdge = useCallback(
     (x: number, y: number, tributaryWidthPercent: number) => {
+      console.log('➕ Adding point to active edge:', { x, y });
+
       // Case 1: No main river exists yet - create first node
       if (!GraphService.hasMainRiver(riverGraph)) {
+        console.log('🆕 Creating first node and main river');
         const { graph: graphWithNode, nodeId } = GraphService.addNode(riverGraph, x, y);
         const { graph: finalGraph, edgeId } = GraphService.createMainRiver(
           graphWithNode,
@@ -39,6 +42,7 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
           60 // Default main river width
         );
 
+        console.log('✅ First node created:', { nodeId, edgeId });
         setRiverGraph(finalGraph);
         setActiveEdgeId(edgeId);
         setSelectedNodeId(nodeId);
@@ -48,14 +52,23 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
       const mainEdge = GraphService.getMainEdge(riverGraph);
       if (!mainEdge) return;
 
+      console.log('🔧 Main river exists, processing...', {
+        selectedNodeId,
+        activeEdgeId,
+        mainEdgeNodes: mainEdge.nodeIds.length,
+      });
+
       // Case 2: Working with main river
       if (activeEdgeId === null || activeEdgeId === 'main' || activeEdgeId === mainEdge.id) {
         if (selectedNodeId) {
           // Check if selected node is valid junction for creating tributary
           const canAttach = GraphService.canAttachToNode(riverGraph, selectedNodeId);
 
+          console.log('🔍 Can attach tributary?', canAttach);
+
           if (canAttach.valid) {
             // Create tributary from this junction
+            console.log('🌿 Creating tributary');
             const result = GraphService.createTributaryFromJunction(
               riverGraph,
               selectedNodeId,
@@ -72,6 +85,7 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
 
           // Otherwise, insert node after selected node in main edge
           try {
+            console.log('📌 Inserting node after selected node');
             const result = GraphService.insertNodeAfter(
               riverGraph,
               mainEdge.id,
@@ -80,22 +94,26 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
               y
             );
 
+            console.log('✅ Node inserted:', result.nodeId);
             setRiverGraph(result.graph);
             setSelectedNodeId(result.nodeId);
           } catch (e) {
             // If insert fails, try adding to end
+            console.log('⚠️ Insert failed, adding to end:', e);
             const result = GraphService.addNodeToEdge(riverGraph, mainEdge.id, x, y);
             setRiverGraph(result.graph);
             setSelectedNodeId(result.nodeId);
           }
         } else {
           // No selected node - add to end of main river
+          console.log('📍 No selected node, adding to end');
           const result = GraphService.addNodeToEdge(riverGraph, mainEdge.id, x, y);
           setRiverGraph(result.graph);
           setSelectedNodeId(result.nodeId);
         }
       } else {
         // Case 3: Working with tributary
+        console.log('🌿 Adding to tributary');
         const result = GraphService.addNodeToEdge(riverGraph, activeEdgeId, x, y);
         setRiverGraph(result.graph);
         setSelectedNodeId(result.nodeId);

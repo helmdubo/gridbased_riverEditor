@@ -113,6 +113,18 @@ export const useRiverRendererV2 = (
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
+      console.log('🎨 Rendering:', {
+        nodes: Object.keys(legacyGraph.mainRiver).length,
+        tributaries: legacyGraph.tributaries.size,
+        curveData: curveData.length,
+      });
+
+      // IMPORTANT: Clear canvas before rendering
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+
       // Compute flow field if needed
       const field = options.showFlowMap || options.showFlowArrows
         ? (flowField || computeFlowField(riverType))
@@ -136,6 +148,8 @@ export const useRiverRendererV2 = (
         mainRiverbedWidth,
         options
       );
+
+      console.log('✅ Render complete');
     },
     [legacyGraph, curveData, flowField, computeFlowField, gridCols, gridRows, gridSize, mainRiverbedWidth]
   );
