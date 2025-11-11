@@ -61,7 +61,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       insertPointPreview: null,
       mainRiverbedWidth,
     }, riverType);
-  }, [render, showFlowMap, showFlowArrows, riverType, mainRiverbedWidth]);
+  }, [riverGraph, render, showFlowMap, showFlowArrows, riverType, mainRiverbedWidth]);
 
   // Handle canvas click
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -72,7 +72,9 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
+    console.log('🖱️ Canvas click:', { x, y });
     addPointToActiveEdge(x, y, tributaryWidthPercent);
+    console.log('📊 Graph updated - nodes:', Object.keys(riverGraph.nodes).length, 'edges:', Object.keys(riverGraph.edges).length);
   };
 
   return (
