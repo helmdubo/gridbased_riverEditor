@@ -4,7 +4,8 @@
 
 import React, { useState } from 'react';
 import { SetupScreen } from './SetupScreen/SetupScreen';
-import { RiverEditor } from './RiverEditor/RiverEditor';
+// import { RiverEditor } from './RiverEditor/RiverEditor';
+import { RiverEditorDemo } from './RiverEditorDemo';
 import { DEFAULT_COLS, DEFAULT_ROWS } from '@domain/constants';
 
 export const App: React.FC = () => {
@@ -24,5 +25,6 @@ export const App: React.FC = () => {
     );
   }
 
-  return <RiverEditor cols={cols} rows={rows} />;
+  // Use V2 Demo with new Node-Edge architecture + P0 bugfixes
+  return <RiverEditorDemo cols={cols} rows={rows} />;
 };
