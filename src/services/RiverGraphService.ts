@@ -10,7 +10,6 @@ import type {
 } from '@domain/models/types';
 import { generateId } from '@domain/utils/geometry';
 import {
-  isJunctionPoint,
   canAttachTributaryToPoint,
   isEndPoint,
 } from '@domain/utils/riverValidation';

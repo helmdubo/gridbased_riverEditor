@@ -232,8 +232,6 @@ export const RiverEditor: React.FC<RiverEditorProps> = ({
         trib.isDetached &&
         trib.points.length > 0
       ) {
-        const mouth = trib.points[0];
-
         // Try point snapping first
         if (snapTargetPointId) {
           snapTributaryToPoint(draggingTributaryInfo.id, snapTargetPointId);

@@ -6,7 +6,7 @@ import { useCallback, useRef, useEffect } from 'react';
 import type { RiverGraph, RiverType } from '@domain/models/types';
 import { RenderService, FlowService } from '@services';
 import type { RenderOptions } from '@services/RenderService';
-import { DEFAULT_GRID_SIZE, DEFAULT_CURVE_SEGMENTS } from '@domain/constants';
+import { DEFAULT_GRID_SIZE } from '@domain/constants';
 
 interface UseRiverRendererOptions {
   cols: number;

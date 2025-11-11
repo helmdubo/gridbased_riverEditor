@@ -13,7 +13,7 @@ import type {
 import type { FlowField } from './FlowService';
 import { getCurvePoints } from '@domain/utils/curves';
 import { isJunctionPoint } from '@domain/utils/riverValidation';
-import { MARCHING_SQUARES_CASES, COLORS, DEFAULT_GRID_SIZE } from '@domain/constants';
+import { MARCHING_SQUARES_CASES, COLORS } from '@domain/constants';
 import { distanceToCurve } from '@domain/utils';
 
 export interface RenderOptions {

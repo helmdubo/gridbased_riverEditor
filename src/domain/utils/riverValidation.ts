@@ -3,7 +3,6 @@
  */
 
 import type { RiverGraph, RiverPoint } from '../models/types';
-import { distance } from './geometry';
 
 /** Check if a point is a junction point (has attached tributaries) */
 export const isJunctionPoint = (riverGraph: RiverGraph, pointId: string): boolean => {
@@ -92,12 +91,13 @@ export const getAdjacentSegments = (
     const pointIndex = trib.points.findIndex((p) => p.id === pointId);
     if (pointIndex === -1) return segments;
 
-    // Skip the first segment if it's attached (it's the connection to main river)
-    const skipFirst = !trib.isDetached && pointIndex === 0;
-
     // Segment before this point
-    if (pointIndex > 0 && !(skipFirst && pointIndex === 1)) {
-      segments.push({ splineId, index: pointIndex - 1 });
+    if (pointIndex > 0) {
+      const segmentIndex = pointIndex - 1;
+      // Skip first segment (0-1) if tributary is attached to main river
+      if (trib.isDetached || segmentIndex !== 0) {
+        segments.push({ splineId, index: segmentIndex });
+      }
     }
 
     // Segment after this point
