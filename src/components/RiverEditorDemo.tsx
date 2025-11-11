@@ -40,6 +40,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     selectedNodeId,
     selectNode,
     moveNode,
+    deleteNode,
   } = useRiverGraphV2();
 
   // Renderer with geometry cache + P0 bugfixes
@@ -104,9 +105,8 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   const handlePointDoubleClick = useCallback((e: React.MouseEvent, pointId: string) => {
     e.stopPropagation();
     console.log('🗑️ Delete node:', pointId);
-    // TODO: Implement deleteNode in useRiverGraphV2
-    // deleteNode(pointId);
-  }, []);
+    deleteNode(pointId);
+  }, [deleteNode]);
 
   const handleOverlayMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     const canvas = canvasRef.current;
@@ -307,7 +307,9 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
         <strong>Instructions:</strong>
         <ul style={{ margin: '10px 0 0 0', paddingLeft: '20px' }}>
           <li>Click on canvas to add points to main river</li>
-          <li>Click on existing junction points to create tributaries</li>
+          <li>Drag nodes to reposition them</li>
+          <li><strong>Double-click</strong> on node to delete it</li>
+          <li>Click on existing junction points to create tributaries (coming soon)</li>
           <li>Selected node: {selectedNodeId || 'none'}</li>
           <li>Nodes: {Object.keys(riverGraph.nodes).length} | Edges: {Object.keys(riverGraph.edges).length}</li>
         </ul>
