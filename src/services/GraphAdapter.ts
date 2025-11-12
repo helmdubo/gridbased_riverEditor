@@ -112,16 +112,16 @@ export function convertToLegacyFormat(
     if (points.length === 0) continue;
 
     const resolvedWidthPx = resolveSplineWidthPx(graphV2, spline);
-    const isIndependent = spline.kind === 'river';
+    const isIndependent = spline.kind === 'river' && !spline.parentId;
     const widthPercent = computeWidthPercent(
       spline.width,
       isIndependent ? DEFAULT_MAIN_RIVERBED_WIDTH : resolvedWidthPx
     );
-    const isDetached = spline.kind === 'tributary' && spline.parentId === null;
+    const isDetached = !isIndependent && spline.kind === 'tributary' && spline.parentId === null;
 
     tributaries.set(splineId, {
       id: splineId,
-      parentPointId: spline.parentJunction,
+      parentPointId: isIndependent ? null : spline.parentJunction,
       points,
       widthPercent,
       isDetached,

@@ -393,14 +393,18 @@ export class RenderService {
         const isDetached = trib.isDetached && !trib.isIndependent;
         const isIndependent = !!trib.isIndependent;
 
-        ctx.strokeStyle = isDetached
-          ? COLORS.TRIBUTARY_DETACHED
-          : isActive
-          ? COLORS.TRIBUTARY_ACTIVE
-          : isIndependent
-          ? COLORS.TRIBUTARY_INACTIVE
-          : COLORS.TRIBUTARY_INACTIVE;
-        ctx.lineWidth = isActive ? 3 : 2;
+        const strokeColor = (() => {
+          if (isDetached) return COLORS.TRIBUTARY_DETACHED;
+          if (isIndependent) {
+            return isActive ? COLORS.MAIN_RIVER_ACTIVE : COLORS.MAIN_RIVER_INACTIVE;
+          }
+          return isActive ? COLORS.TRIBUTARY_ACTIVE : COLORS.TRIBUTARY_INACTIVE;
+        })();
+
+        const lineWidth = isIndependent ? (isActive ? 4 : 3) : isActive ? 3 : 2;
+
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = lineWidth;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         if (isDetached) ctx.setLineDash([5, 5]);
