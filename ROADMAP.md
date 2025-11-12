@@ -6,7 +6,7 @@
 
 **Финальная цель:** Прототип для миграции в UE5.6 Scriptable Tools
 
-**Дата последнего обновления:** 2025-01-11
+**Дата последнего обновления:** 2025-11-12
 
 ---
 
@@ -31,10 +31,11 @@
 - [x] Создать `src/core/graph/types.ts`
   - [x] `NodeId`, `EdgeId` типы
   - [x] `Node` интерфейс `{ id, x, y }`
-  - [x] `WidthAbs` и `WidthRel` для ширины
-  - [x] `Edge` интерфейс `{ id, kind, nodeIds, widthMode, flowSign, parentJunction, isDetached }`
+  - [x] `Width` unified interface `{ kind: 'px' | 'relative', value: number }`
+  - [x] `EdgeKind` type `'river' | 'tributary'`
+  - [x] `Edge` интерфейс `{ id, kind, nodeIds, parentId, parentJunction, width, children }`
   - [x] `RiverGraphV2` интерфейс `{ nodes, edges, mainEdgeId }`
-  - [x] `FlowSign` type (`1 | -1`)
+  - [x] V1-V7 инварианты задокументированы в JSDoc
 
 ### 1.2 Валидация графа
 
@@ -54,9 +55,13 @@
   - [x] `createEdge(graph, kind, nodeIds, width)` → `{ graph, edgeId }`
   - [x] `splitEdge(graph, edgeId, newNodeId, atIndex)` → `graph`
   - [x] `deleteEdge(graph, edgeId)` → `graph`
-  - [x] `attachTributary(graph, tribEdgeId, junctionNodeId)` → `graph`
+  - [x] `attachTributary(graph, childEdgeId, parentEdgeId, junctionNodeId)` → `graph` (с V2-V7 валидацией)
   - [x] `detachTributary(graph, tribEdgeId)` → `graph`
   - [x] `updateEdgeWidth(graph, edgeId, width)` → `graph`
+  - [x] `reverseEdge(graph, edgeId)` → `graph` (заменяет FlowSign)
+  - [x] `extendUpstream(graph, edgeId, x, y)` → `{ graph, nodeId }` (prepend к source)
+  - [x] `extendDownstream(graph, edgeId, x, y)` → `{ graph, nodeId }` (append к mouth)
+  - [x] `insertBetween(graph, edgeId, afterIndex, x, y)` → `{ graph, nodeId }`
 
 **Критерии завершения фазы 1:**
 - ✅ Все типы определены
@@ -117,19 +122,22 @@
 
 ### 3.1 Адаптер GraphService
 
-- [ ] Создать `src/services/GraphService.ts`
-  - Обёртка над `core/graph/operations`
-  - Методы возвращают новый граф (immutable)
-  - Без stateful логики (чистые функции)
+- [x] Создать `src/services/GraphService.ts`
+  - [x] Обёртка над `core/graph/operations`
+  - [x] Методы возвращают новый граф (immutable)
+  - [x] Без stateful логики (чистые функции)
+  - [x] Добавлены методы: reverseEdge, extendUpstream/Downstream, insertBetween
 
 ### 3.2 Hook useRiverGraph (обновление)
 
-- [ ] Обновить `src/hooks/useRiverGraph.ts`
-  - [ ] State: `riverGraph: RiverGraphV2`
-  - [ ] State: `activeEdgeId: EdgeId | null`
-  - [ ] State: `selectedNodeId: NodeId | null`
-  - [ ] Методы используют GraphService
-  - [ ] Простой кэш без сложных useMemo (см. фазу 4)
+- [x] Обновить `src/hooks/useRiverGraphV2.ts`
+  - [x] State: `riverGraph: RiverGraphV2`
+  - [x] State: `activeEdgeId: EdgeId | null`
+  - [x] State: `selectedNodeId: NodeId | null`
+  - [x] Методы используют GraphService
+  - [x] Логика extend upstream/downstream с определением endpoint nodes
+  - [x] Логика создания tributaries от junction nodes
+  - [x] Простой кэш без сложных useMemo (см. фазу 4)
 
 ### 3.3 Обновление RenderService
 
@@ -171,16 +179,19 @@
 - 🚧 Можно создавать/присоединять притоки (pending)
 - ✅ Flow map отображается корректно
 
-**Прогресс восстановления функциональности (2025-01-11):**
+**Прогресс восстановления функциональности (2025-11-12):**
 - ✅ Hover highlighting для вершин
 - ✅ Cursor feedback (crosshair/grab/grabbing)
 - ✅ Drag-and-drop для main river nodes
 - ✅ Node deletion (double-click)
 - ✅ Tributary nodes интерактивные
-- 🚧 Tributary creation от junction nodes (pending)
+- ✅ **Extend upstream/downstream от endpoints** - новые вершины корректно добавляются к концам реки
+- ✅ **Mid-node insertion** - вставка вершин между существующими
+- ✅ **Comprehensive debugger** - полная информация о выбранной вершине/реке
+- ✅ **New River button** - кнопка создания новой реки (пока очищает граф)
+- 🚧 Tributary creation от junction nodes (в процессе тестирования)
 - 🚧 Tributary attachment/detachment with snapping (pending)
-- 🚧 Insert point preview для mid-segment insertion (pending)
-- 🚧 Spline extension от endpoints (pending)
+- 🚧 Multi-river support (pending)
 
 ---
 
@@ -282,6 +293,25 @@
 
 ## 🔄 История изменений
 
+### 2025-11-12 - 🔧 Рефакторинг архитектуры (Variant A) + Bug Fixes + UI Improvements
+- ✅ **Архитектурный рефакторинг (Variant A - полный):**
+  - ✅ `Edge`: удалены `flowSign` и `isDetached`, добавлены `parentId` и `children`
+  - ✅ `EdgeKind`: изменен с `'main' | 'tributary'` на `'river' | 'tributary'`
+  - ✅ `Width`: упрощен с union type на single interface `{ kind: 'px' | 'relative', value: number }`
+  - ✅ Задокументированы V1-V7 инварианты в JSDoc
+  - ✅ Обновлены все операции: `createEdge`, `attachTributary`, `detachTributary`
+  - ✅ Добавлены новые операции: `reverseEdge`, `extendUpstream`, `extendDownstream`, `insertBetween`
+  - ✅ Обновлены GraphService, useRiverGraphV2, GraphAdapter под новую модель
+- ✅ **Bug Fixes:**
+  - ✅ **P0 FIX: Extend upstream** - новая вершина теперь корректно становится истоком (prepend), а не вставляется после истока
+  - ✅ **P0 FIX: Extend downstream** - новая вершина корректно становится устьем (append)
+  - ✅ Логика определения endpoint nodes (source/mouth) vs mid-nodes
+- ✅ **UI Improvements:**
+  - ✅ Comprehensive debugger с полной информацией о графе, выбранной вершине, реке и притоках
+  - ✅ Кнопка "New River" для создания новых рек (multi-river support pending)
+  - ✅ Цветная монопространственная визуализация структуры данных
+- ✅ Build successful, type-check passed, все изменения закоммичены
+
 ### 2025-01-11 - 🎉 Фаза 3 завершена - ПРИЛОЖЕНИЕ РАБОТАЕТ!
 - ✅ Создан `src/services/GraphService.ts` - adapter для core operations
 - ✅ Создан `src/hooks/useRiverGraphV2.ts` - React hook для графа V2
@@ -331,16 +361,28 @@
 
 ## 🎯 Следующий шаг
 
-✅ **Фазы 1-3 завершены! Приложение работает!**
+✅ **Фазы 1-3 завершены! Приложение работает на новой архитектуре!**
+
+**Последние изменения (2025-11-12):**
+- ✅ Выполнен полный архитектурный рефакторинг (Variant A)
+- ✅ Исправлены критические баги extend upstream/downstream
+- ✅ Добавлен comprehensive debugger
+- ✅ Добавлена кнопка New River
 
 Запуск приложения:
 ```bash
 npm run dev
 ```
 
+**Приоритетные задачи для следующей сессии:**
+1. **Multi-river support** - реализовать поддержку нескольких независимых рек на одной карте
+2. **Tributary creation testing** - протестировать создание притоков от junction nodes
+3. **Tributary attachment/detachment** - восстановить snapping функциональность
+4. **Pointer capture** (P0 bugfix) - стабильный drag на всех браузерах
+5. **FlowService refactoring** - удалить зависимость от flowSign (не критично)
+
 Опциональные улучшения (Фаза 4-5):
-- Полная миграция RiverEditor компонента
-- Pointer capture для стабильного drag
 - Рефакторинг RenderService для прямого использования cache
 - widthFromMask для быстрого вычисления ширины
 - Undo/Redo (просто стек графов)
+- Keyboard shortcuts (Delete для удаления node)

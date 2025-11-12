@@ -4,31 +4,75 @@
 
 ## 🌊 Возможности
 
-- ✅ Создание главной реки с помощью контрольных точек
-- ✅ Добавление притоков с настраиваемой шириной
+### Core Features
+- ✅ **Node-Edge архитектура** - UE5.6-готовая модель данных
+- ✅ Создание речных систем с явными вершинами и ребрами
+- ✅ Extend upstream/downstream - расширение реки от концов
+- ✅ Mid-node insertion - вставка вершин между существующими
+- ✅ Comprehensive debugger - полная информация о структуре графа
+
+### Visualization & Interaction
 - ✅ Интерполяция кривых (Catmull-Rom сплайны)
 - ✅ Визуализация потоков воды с направлением и скоростью
 - ✅ Разные типы рек (стоячая вода, равнинная, горная, бурный поток)
 - ✅ Marching Squares для отрисовки контуров
-- ✅ Snap-to-point и snap-to-spline для притоков
-- ✅ Интерактивное перетаскивание точек
-- ✅ Защита от неверных топологий (запрещенные зоны вокруг узлов)
+- ✅ Интерактивное перетаскивание вершин
+- ✅ Retina display support (devicePixelRatio fix)
+
+### In Development
+- 🚧 Multi-river support - создание нескольких независимых рек
+- 🚧 Tributary creation/attachment - притоки с snap-to-point/spline
+- 🚧 V1-V7 invariants validation - строгие правила топологии
 
 ## 🏗️ Архитектура
 
-Проект организован по принципу многослойной архитектуры:
+### Node-Edge Graph Model
+
+Проект использует **Node-Edge архитектуру**, готовую к портированию в UE5.6:
+
+```typescript
+// Граф речной системы
+interface RiverGraphV2 {
+  nodes: Record<NodeId, Node>;      // Вершины (control points)
+  edges: Record<EdgeId, Edge>;      // Реки (main + tributaries)
+  mainEdgeId: EdgeId | null;        // ID главной реки
+}
+
+// Ребро (река или приток)
+interface Edge {
+  id: EdgeId;
+  kind: 'river' | 'tributary';
+  nodeIds: string[];                // Порядок = направление течения
+  parentId: EdgeId | null;          // Родительская река (для притоков)
+  parentJunction: NodeId | null;    // Узел присоединения
+  width: Width;                     // Ширина
+  children: EdgeId[];               // Дочерние притоки
+}
+```
+
+### Многослойная архитектура
 
 ```
-Domain Layer (модели, константы, утилиты)
+Core Layer (UE-Ready, Pure Functions)
+  src/core/graph/        - types, operations, validation
+  src/core/geometry/     - curves, frames, cache
     ↓
-Service Layer (бизнес-логика)
+Service Layer (Adapters & Business Logic)
+  src/services/          - GraphService, RenderService, FlowService
     ↓
-Hooks Layer (React hooks)
+Hooks Layer (React State Management)
+  src/hooks/             - useRiverGraphV2, useRiverRendererV2
     ↓
-Presentation Layer (UI компоненты)
+Presentation Layer (UI Components)
+  src/components/        - RiverEditorDemo, Canvas, Overlay
 ```
 
-Подробнее см. [ARCHITECTURE.md](./ARCHITECTURE.md)
+**Принципы:**
+- Core layer - pure functions (immutable)
+- V1-V7 invariants - строгие правила топологии
+- UE5-compatible types - готово к миграции
+
+Подробнее: [ROADMAP.md](./ROADMAP.md) | [AGENTS.md](./AGENTS.md)
 
 ## 📦 Установка
 
@@ -46,29 +90,45 @@ npm run dev
 
 ## 🎯 Использование
 
-### Базовые операции
+### Базовые операции (2025-11-12 update)
 
-1. **Настройка сетки**: При запуске настройте размер сетки (10-40 колонок, 8-30 рядов)
+1. **Запуск приложения**:
+   ```bash
+   npm run dev
+   # Откройте http://localhost:5173
+   ```
 
 2. **Создание реки**:
-   - Кликните на поле для добавления первой точки
-   - Выберите крайнюю точку (исток/устье) и кликните снова для продолжения реки
+   - Кликните на canvas для создания первой вершины
+   - Кликните снова для добавления следующих вершин
+   - Река создается автоматически
 
-3. **Создание притока**:
-   - Выберите внутреннюю точку основной реки
-   - Кликните на поле - создастся новый приток
+3. **Extend от концов реки**:
+   - **Source (исток)**: Выберите первую вершину → клик на canvas
+     - Новая вершина становится новым истоком (prepend)
+   - **Mouth (устье)**: Выберите последнюю вершину → клик на canvas
+     - Новая вершина становится новым устьем (append)
 
-4. **Перемещение точек**:
-   - Перетащите любую точку для изменения формы реки
-   - При перетаскивании автоматически активируется соответствующий сплайн
+4. **Insert между вершинами**:
+   - Выберите любую промежуточную вершину (не исток/устье)
+   - Кликните на canvas → новая вершина вставится после выбранной
 
-5. **Присоединение притока**:
-   - К точке: перетащите устье откреплённого притока к точке реки
-   - К сплайну: перетащите устье к линии реки (вне запрещённых зон)
+5. **Перемещение вершин**:
+   - Перетащите любую вершину для изменения формы реки
+   - Кривая пересчитывается автоматически
 
-6. **Удаление**:
-   - Двойной клик по точке удаляет её
-   - Удаление узловой точки открепляет приток
+6. **Удаление вершин**:
+   - Двойной клик по вершине для удаления
+
+7. **Debugger** (правый нижний угол):
+   - Graph State - общая информация о графе
+   - Selected Node - тип вершины (source/mouth/mid/junction)
+   - Edge Info - информация о реке (ID, kind, width, children)
+   - Tributaries - список притоков
+
+8. **New River** (в разработке):
+   - Зеленая кнопка в правом верхнем углу
+   - Пока очищает граф (multi-river support coming soon)
 
 ### Параметры
 
@@ -159,6 +219,11 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 ## 🔗 Ссылки
 
-- [Документация по архитектуре](./ARCHITECTURE.md)
+### Документация проекта
+- [ROADMAP.md](./ROADMAP.md) - план разработки и история изменений
+- [AGENTS.md](./AGENTS.md) - руководство для AI агентов и разработчиков
+
+### Алгоритмы
 - [Catmull-Rom Splines](https://en.wikipedia.org/wiki/Centripetal_Catmull%E2%80%93Rom_spline)
 - [Marching Squares](https://en.wikipedia.org/wiki/Marching_squares)
+- [UE5 Scriptable Tools](https://dev.epicgames.com/documentation/en-us/unreal-engine/scriptable-tools-in-unreal-engine)
