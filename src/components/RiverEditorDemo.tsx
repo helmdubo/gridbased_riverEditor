@@ -41,7 +41,45 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     selectNode,
     moveNode,
     deleteNode,
+    clearAll,
   } = useRiverGraphV2();
+
+  // Create new independent river
+  const handleCreateNewRiver = () => {
+    console.log('🆕 Creating new independent river');
+    // TODO: Implement multi-river support
+    // For now, just clear and start fresh
+    clearAll();
+  };
+
+  // Get detailed info about selected node and its edge
+  const getSelectedNodeInfo = () => {
+    if (!selectedNodeId) return null;
+
+    // Find which edge contains this node
+    const edgeWithNode = Object.values(riverGraph.edges).find(edge =>
+      edge.nodeIds.includes(selectedNodeId as string)
+    );
+
+    if (!edgeWithNode) return null;
+
+    const nodeIndex = edgeWithNode.nodeIds.indexOf(selectedNodeId as string);
+    const isSource = nodeIndex === 0;
+    const isMouth = nodeIndex === edgeWithNode.nodeIds.length - 1;
+    const isJunction = edgeWithNode.children.length > 0 && edgeWithNode.nodeIds[nodeIndex] === selectedNodeId;
+
+    let nodeType = 'mid';
+    if (isSource) nodeType = 'source';
+    else if (isMouth) nodeType = 'mouth';
+    if (isJunction) nodeType += '+junction';
+
+    return {
+      edge: edgeWithNode,
+      nodeIndex,
+      nodeType,
+      totalNodes: edgeWithNode.nodeIds.length,
+    };
+  };
 
   // Renderer with geometry cache + P0 bugfixes
   const { canvasRef, legacyGraph, render } = useRiverRendererV2(
@@ -297,22 +335,117 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
         </label>
       </div>
 
-      {/* Info */}
+      {/* Info & Debugger */}
       <div style={{
         padding: '15px',
         backgroundColor: '#2a2a2a',
         borderRadius: '8px',
-        fontSize: '14px',
+        fontSize: '13px',
       }}>
-        <strong>Instructions:</strong>
-        <ul style={{ margin: '10px 0 0 0', paddingLeft: '20px' }}>
-          <li>Click on canvas to add points to main river</li>
-          <li>Drag nodes to reposition them</li>
-          <li><strong>Double-click</strong> on node to delete it</li>
-          <li>Click on existing junction points to create tributaries (coming soon)</li>
-          <li>Selected node: {selectedNodeId || 'none'}</li>
-          <li>Nodes: {Object.keys(riverGraph.nodes).length} | Edges: {Object.keys(riverGraph.edges).length}</li>
-        </ul>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div style={{ flex: 1 }}>
+            <strong>Instructions:</strong>
+            <ul style={{ margin: '5px 0 0 0', paddingLeft: '20px', fontSize: '12px' }}>
+              <li>Click on canvas to add/extend nodes</li>
+              <li>Drag nodes to reposition them</li>
+              <li><strong>Double-click</strong> on node to delete it</li>
+              <li>Select <strong>source/mouth</strong> node then click to <strong>extend</strong></li>
+              <li>Select mid-node to <strong>insert</strong> or create <strong>tributary</strong></li>
+            </ul>
+          </div>
+
+          <button
+            onClick={handleCreateNewRiver}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: '#059669',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: 'bold',
+            }}
+          >
+            🆕 New River
+          </button>
+        </div>
+
+        <div style={{
+          marginTop: '15px',
+          padding: '12px',
+          backgroundColor: '#1a1a1a',
+          borderRadius: '4px',
+          fontFamily: 'monospace',
+          fontSize: '12px',
+          lineHeight: '1.6',
+        }}>
+          <strong style={{ color: '#10b981' }}>Graph State:</strong>
+          <div style={{ marginLeft: '10px', marginTop: '5px' }}>
+            <div>Total Nodes: <span style={{ color: '#fbbf24' }}>{Object.keys(riverGraph.nodes).length}</span></div>
+            <div>Total Edges: <span style={{ color: '#fbbf24' }}>{Object.keys(riverGraph.edges).length}</span></div>
+            <div>Main River: <span style={{ color: '#fbbf24' }}>{riverGraph.mainEdgeId ? 'Yes' : 'No'}</span></div>
+          </div>
+
+          {(() => {
+            const info = getSelectedNodeInfo();
+            if (!info) {
+              return (
+                <div style={{ marginTop: '10px', color: '#888' }}>
+                  No node selected
+                </div>
+              );
+            }
+
+            const edge = info.edge;
+            const isMainRiver = riverGraph.mainEdgeId === edge.id;
+
+            return (
+              <div style={{ marginTop: '10px' }}>
+                <strong style={{ color: '#3b82f6' }}>Selected Node:</strong>
+                <div style={{ marginLeft: '10px', marginTop: '5px' }}>
+                  <div>ID: <span style={{ color: '#a855f7' }}>{selectedNodeId?.slice(0, 8)}...</span></div>
+                  <div>Type: <span style={{ color: '#ef4444' }}>{info.nodeType}</span></div>
+                  <div>Position: <span style={{ color: '#fbbf24' }}>{info.nodeIndex + 1}/{info.totalNodes}</span></div>
+                </div>
+
+                <div style={{ marginTop: '8px' }}>
+                  <strong style={{ color: '#3b82f6' }}>Edge (River):</strong>
+                  <div style={{ marginLeft: '10px', marginTop: '5px' }}>
+                    <div>ID: <span style={{ color: '#a855f7' }}>{edge.id.slice(0, 8)}...</span></div>
+                    <div>Kind: <span style={{ color: '#10b981' }}>{edge.kind}</span> {isMainRiver && '(main)'}</div>
+                    <div>Nodes: <span style={{ color: '#fbbf24' }}>{edge.nodeIds.length}</span></div>
+                    <div>Width: <span style={{ color: '#fbbf24' }}>{edge.width.kind === 'px' ? `${edge.width.value}px` : `${edge.width.value}%`}</span></div>
+                    {edge.parentId && (
+                      <>
+                        <div>Parent: <span style={{ color: '#a855f7' }}>{edge.parentId.slice(0, 8)}...</span></div>
+                        <div>Junction: <span style={{ color: '#a855f7' }}>{edge.parentJunction?.slice(0, 8)}...</span></div>
+                      </>
+                    )}
+                    {edge.children.length > 0 && (
+                      <div>Children: <span style={{ color: '#10b981' }}>{edge.children.length} tributary(ies)</span></div>
+                    )}
+                  </div>
+                </div>
+
+                {edge.children.length > 0 && (
+                  <div style={{ marginTop: '8px' }}>
+                    <strong style={{ color: '#10b981' }}>Tributaries:</strong>
+                    {edge.children.map((childId, idx) => {
+                      const childEdge = riverGraph.edges[childId];
+                      if (!childEdge) return null;
+                      return (
+                        <div key={childId} style={{ marginLeft: '10px', marginTop: '3px', color: '#888' }}>
+                          {idx + 1}. {childId.slice(0, 8)}... ({childEdge.nodeIds.length} nodes)
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </div>
       </div>
 
       {/* Canvas + Overlay */}
