@@ -43,12 +43,12 @@ interface Node {
 
 interface Edge {
   id: EdgeId;
-  kind: 'main' | 'tributary';
-  nodeIds: NodeId[];              // путь по узлам
-  widthMode: WidthAbs | WidthRel;
-  flowSign: 1 | -1;               // направление потока
-  parentJunction?: NodeId;        // для притоков
-  isDetached?: boolean;
+  kind: 'river' | 'tributary';
+  nodeIds: NodeId[];              // путь по узлам (source → mouth)
+  width: { kind: 'px' | 'relative'; value: number };
+  parentId: EdgeId | null;        // null для независимых рек
+  parentJunction: NodeId | null;  // узел присоединения (не исток)
+  children: EdgeId[];
 }
 ```
 
@@ -62,6 +62,13 @@ interface Edge {
 | **Junction точки** | ❌ Неявные (parentPointId) | ✅ Явные (Node с ≥2 edges) |
 | **Undo/Redo** | ❌ Сложно | ✅ Стек состояний графа |
 | **Валидация** | ❌ Ручная | ✅ Инварианты графа |
+| **Multi-river** | ❌ Один main | ✅ Любое число `kind='river'` |
+
+---
+
+### Meta-graph концепция
+
+Каждый сплайн трактуется как «мета-узел», который инкапсулирует свой путь (nodeIds) и список дочерних сплайнов. Притоки образуют иерархию, но при отсоединении становятся новым корневым мета-узлом с теми же атрибутами, что и исходная река. Это упрощает дальнейший перенос в UE, где такие мета-узлы могут отображаться как отдельные `USplineComponent` с собственными детьми.
 
 ---
 

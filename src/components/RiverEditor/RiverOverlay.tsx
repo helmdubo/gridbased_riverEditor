@@ -22,6 +22,7 @@ interface RiverOverlayProps {
   onMouseMove: (e: React.MouseEvent<SVGSVGElement>) => void;
   onMouseUp: () => void;
   onMouseLeave: () => void;
+  onBackgroundClick?: (e: React.MouseEvent<SVGSVGElement>) => void;
   onPointMouseDown: (pointId: string) => void;
   onPointClick: (e: React.MouseEvent, pointId: string) => void;
   onPointDoubleClick: (e: React.MouseEvent, pointId: string) => void;
@@ -49,6 +50,7 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
   onMouseMove,
   onMouseUp,
   onMouseLeave,
+  onBackgroundClick,
   onPointMouseDown,
   onPointClick,
   onPointDoubleClick,
@@ -61,10 +63,15 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
       ref={overlayRef}
       width={width}
       height={height}
-      style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
+      style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'auto' }}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
       onMouseLeave={onMouseLeave}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          onBackgroundClick?.(event);
+        }
+      }}
     >
       {/* Insert point preview */}
       {insertPointPreview && (
@@ -88,28 +95,64 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
         </g>
       )}
 
-      {/* Tributary points */}
-      {Array.from(riverGraph.tributaries.values()).map((trib) =>
-        trib.points.map((p, idx) => {
-          const isMouth = idx === 0;
-          if (isMouth && !trib.isDetached) return null;
+      {(() => {
+        const tributaryEntries = Array.from(riverGraph.tributaries.entries());
+        const independentEntries = tributaryEntries.filter(([, trib]) => trib.isIndependent);
+        const childEntries = tributaryEntries.filter(([, trib]) => !trib.isIndependent);
 
-          return (
-            <PointMarker
-              key={`${trib.id}-${p.id}`}
-              point={p}
-              isHovered={hoveredTributaryId === trib.id && hoveredTributaryPointId === p.id}
-              isActive={activeSplineId === trib.id}
-              isJunction={false}
-              isDetached={trib.isDetached}
-              isSnapTarget={false}
-              onMouseDown={() => onTributaryPointMouseDown(trib.id, p.id, isMouth)}
-              onClick={(e) => onTributaryPointClick(e, trib.id, p.id)}
-              onDoubleClick={(e) => onTributaryPointDoubleClick(e, trib.id, p.id)}
-            />
-          );
-        })
-      )}
+        return (
+          <>
+            {/* Independent rivers (render like main) */}
+            {independentEntries.map(([id, trib]) =>
+              trib.points.map((p, idx) => {
+                const isMouth = idx === trib.points.length - 1;
+                const isJunction = isJunctionPoint(riverGraph, p.id);
+
+                return (
+                  <PointMarker
+                    key={`${id}-${p.id}`}
+                    point={p}
+                    isHovered={hoveredTributaryId === id && hoveredTributaryPointId === p.id}
+                    isSelected={selectedPointId === p.id}
+                    isActive={activeSplineId === id}
+                    isJunction={isJunction}
+                    isDetached={false}
+                    isSnapTarget={false}
+                    onMouseDown={() => onTributaryPointMouseDown(id, p.id, isMouth)}
+                    onClick={(e) => onTributaryPointClick(e, id, p.id)}
+                    onDoubleClick={(e) => onTributaryPointDoubleClick(e, id, p.id)}
+                  />
+                );
+              })
+            )}
+
+            {/* Attached / detached tributaries */}
+            {childEntries.map(([id, trib]) =>
+              trib.points.map((p, idx) => {
+                const isMouth = idx === trib.points.length - 1;
+                const hideAttachedMouth = isMouth && !trib.isDetached;
+                if (hideAttachedMouth) return null;
+
+                return (
+                  <PointMarker
+                    key={`${id}-${p.id}`}
+                    point={p}
+                    isHovered={hoveredTributaryId === id && hoveredTributaryPointId === p.id}
+                    isSelected={selectedPointId === p.id}
+                    isActive={activeSplineId === id}
+                    isJunction={false}
+                    isDetached={trib.isDetached}
+                    isSnapTarget={false}
+                    onMouseDown={() => onTributaryPointMouseDown(id, p.id, isMouth)}
+                    onClick={(e) => onTributaryPointClick(e, id, p.id)}
+                    onDoubleClick={(e) => onTributaryPointDoubleClick(e, id, p.id)}
+                  />
+                );
+              })
+            )}
+          </>
+        );
+      })()}
 
       {/* Main river points */}
       {riverGraph.mainRiver.map((p) => {
@@ -122,7 +165,7 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
             point={p}
             isHovered={hoveredPointId === p.id}
             isSelected={selectedPointId === p.id}
-            isActive={false}
+            isActive={activeSplineId === 'main'}
             isJunction={isJunction}
             isDetached={false}
             isSnapTarget={isSnapTarget}

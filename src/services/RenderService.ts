@@ -13,7 +13,7 @@ import type {
 import type { FlowField } from './FlowService';
 import { getCurvePoints } from '@domain/utils/curves';
 import { isJunctionPoint } from '@domain/utils/riverValidation';
-import { MARCHING_SQUARES_CASES, COLORS } from '@domain/constants';
+import { MARCHING_SQUARES_CASES, COLORS, DEFAULT_MAIN_RIVERBED_WIDTH } from '@domain/constants';
 import { distanceToCurve } from '@domain/utils';
 
 export interface RenderOptions {
@@ -84,12 +84,17 @@ export class RenderService {
     }
 
     riverGraph.tributaries.forEach((trib, id) => {
-      const tribWidth = (trib.widthPercent / 100) * mainRiverbedWidth;
+      const widthPx =
+        typeof trib.resolvedWidthPx === 'number'
+          ? trib.resolvedWidthPx
+          : trib.isIndependent
+            ? (trib.widthPercent / 100) * DEFAULT_MAIN_RIVERBED_WIDTH
+            : (trib.widthPercent / 100) * mainRiverbedWidth;
       const tribCurve = getCurvePoints(trib.points);
       if (tribCurve.length > 0) {
         allCurves.push({
           curve: tribCurve,
-          width: tribWidth,
+          width: widthPx,
           id,
           isMain: false,
         });
@@ -385,14 +390,21 @@ export class RenderService {
       const tribCurve = getCurvePoints(trib.points);
       if (tribCurve.length > 1) {
         const isActive = options.activeSplineId === id;
-        const isDetached = trib.isDetached;
+        const isDetached = trib.isDetached && !trib.isIndependent;
+        const isIndependent = !!trib.isIndependent;
 
-        ctx.strokeStyle = isDetached
-          ? COLORS.TRIBUTARY_DETACHED
-          : isActive
-          ? COLORS.TRIBUTARY_ACTIVE
-          : COLORS.TRIBUTARY_INACTIVE;
-        ctx.lineWidth = isActive ? 3 : 2;
+        const strokeColor = (() => {
+          if (isDetached) return COLORS.TRIBUTARY_DETACHED;
+          if (isIndependent) {
+            return isActive ? COLORS.MAIN_RIVER_ACTIVE : COLORS.MAIN_RIVER_INACTIVE;
+          }
+          return isActive ? COLORS.TRIBUTARY_ACTIVE : COLORS.TRIBUTARY_INACTIVE;
+        })();
+
+        const lineWidth = isIndependent ? (isActive ? 4 : 3) : isActive ? 3 : 2;
+
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = lineWidth;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         if (isDetached) ctx.setLineDash([5, 5]);

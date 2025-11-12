@@ -2,7 +2,7 @@
  * Hook for managing river rendering with geometry cache (V2)
  *
  * This hook manages:
- * - Geometry cache for edges (curves + frames + segIndexAt)
+ * - Geometry cache for splines (curves + frames + segIndexAt)
  * - Conversion to legacy format via GraphAdapter
  * - Flow field computation
  * - Canvas rendering with devicePixelRatio (P0 BUGFIX!)

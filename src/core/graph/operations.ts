@@ -18,12 +18,12 @@ import type {
   RiverGraphV2,
   Node,
   NodeId,
-  Edge,
-  EdgeId,
-  EdgeKind,
+  Spline,
+  SplineId,
+  SplineKind,
   Width,
 } from './types';
-import { makeNodeId, makeEdgeId } from './types';
+import { makeNodeId, makeSplineId } from './types';
 import { generateId } from '../geometry/geometry';
 
 /**
@@ -35,11 +35,11 @@ export interface AddNodeResult {
 }
 
 /**
- * Result of an operation that creates a new edge
+ * Result of an operation that creates a new spline
  */
-export interface CreateEdgeResult {
+export interface CreateSplineResult {
   graph: RiverGraphV2;
-  edgeId: EdgeId;
+  splineId: SplineId;
 }
 
 /**
@@ -48,17 +48,17 @@ export interface CreateEdgeResult {
 function cloneGraph(graph: RiverGraphV2): RiverGraphV2 {
   return {
     nodes: { ...graph.nodes },
-    edges: Object.fromEntries(
-      Object.entries(graph.edges).map(([id, edge]) => [
+    splines: Object.fromEntries(
+      Object.entries(graph.splines).map(([id, spline]) => [
         id,
         {
-          ...edge,
-          nodeIds: [...edge.nodeIds],
-          width: { ...edge.width },
+          ...spline,
+          nodeIds: [...spline.nodeIds],
+          width: { ...spline.width },
         },
       ])
     ),
-    mainEdgeId: graph.mainEdgeId,
+    mainSplineId: graph.mainSplineId,
   };
 }
 
@@ -95,8 +95,8 @@ export function addNode(graph: RiverGraphV2, x: number, y: number): AddNodeResul
 /**
  * Deletes a node from the graph
  *
- * WARNING: This will also remove the node from any edges that reference it.
- * If this causes an edge to have <2 nodes, that edge is deleted too.
+ * WARNING: This will also remove the node from any splines that reference it.
+ * If this causes an spline to have <2 nodes, that spline is deleted too.
  *
  * @param graph - Current graph state
  * @param nodeId - ID of node to delete
@@ -112,31 +112,58 @@ export function deleteNode(graph: RiverGraphV2, nodeId: NodeId): RiverGraphV2 {
   // Remove node
   delete newGraph.nodes[nodeId];
 
-  // Remove node from all edges and delete edges that become invalid
-  const edgesToDelete: EdgeId[] = [];
+  // Remove node from all splines and delete splines that become invalid
+  const splinesToDelete: SplineId[] = [];
+  const detachments: Array<{ parentId: SplineId; childId: SplineId }> = [];
 
-  for (const [edgeId, edge] of Object.entries(newGraph.edges)) {
-    const newNodeIds = edge.nodeIds.filter((id) => id !== nodeId);
+  for (const [splineId, spline] of Object.entries(newGraph.splines)) {
+    const newNodeIds = spline.nodeIds.filter((id) => id !== nodeId);
+
+    if (!spline.nodeIds.includes(nodeId as string)) {
+      continue;
+    }
 
     if (newNodeIds.length < 2) {
-      // Edge becomes invalid (less than 2 nodes)
-      edgesToDelete.push(edgeId as EdgeId);
-    } else {
-      // Update edge with filtered nodeIds
-      newGraph.edges[edgeId] = {
-        ...edge,
-        nodeIds: newNodeIds,
+      // Spline becomes invalid (less than 2 nodes)
+      splinesToDelete.push(splineId as SplineId);
+      continue;
+    }
+
+    let updatedSpline: Spline = {
+      ...spline,
+      nodeIds: newNodeIds,
+    };
+
+    if (spline.kind === 'tributary' && spline.parentJunction === nodeId && spline.parentId) {
+      // Junction removed: detach tributary and let it become independent
+      detachments.push({ parentId: spline.parentId, childId: splineId as SplineId });
+      updatedSpline = {
+        ...updatedSpline,
+        kind: 'river',
+        parentId: null,
+        parentJunction: null,
       };
+    }
+
+    newGraph.splines[splineId] = updatedSpline;
+  }
+
+  // Delete invalid splines
+  for (const splineId of splinesToDelete) {
+    delete newGraph.splines[splineId];
+    if (newGraph.mainSplineId === splineId) {
+      newGraph.mainSplineId = null;
     }
   }
 
-  // Delete invalid edges
-  for (const edgeId of edgesToDelete) {
-    delete newGraph.edges[edgeId];
-    // If we deleted the main edge, clear mainEdgeId
-    if (newGraph.mainEdgeId === edgeId) {
-      newGraph.mainEdgeId = null;
-    }
+  // Remove detached tributaries from their former parents
+  for (const { parentId, childId } of detachments) {
+    const parentSpline = newGraph.splines[parentId];
+    if (!parentSpline) continue;
+    newGraph.splines[parentId] = {
+      ...parentSpline,
+      children: parentSpline.children.filter((id) => id !== childId),
+    };
   }
 
   return newGraph;
@@ -175,40 +202,40 @@ export function moveNode(
 }
 
 /**
- * Creates a new edge in the graph
+ * Creates a new spline in the graph
  *
- * Creates an edge connecting the specified nodes. The order of nodeIds defines
+ * Creates an spline connecting the specified nodes. The order of nodeIds defines
  * the downstream flow: nodeIds[0] = source, nodeIds[last] = mouth.
  *
  * @param graph - Current graph state
- * @param kind - Edge type ('river' for independent, 'tributary' for attached child)
- * @param nodeIds - Array of node IDs defining the edge path (must be ≥1)
+ * @param kind - Spline type ('river' for independent, 'tributary' for attached child)
+ * @param nodeIds - Array of node IDs defining the spline path (must be ≥1)
  * @param width - Width specification (px or relative)
- * @returns New graph with edge created and the new edge's ID
+ * @returns New graph with spline created and the new spline's ID
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
- * static FRiverGraph CreateEdge(const FRiverGraph& Graph, ERiverEdgeKind Kind,
+ * static FRiverGraph CreateSpline(const FRiverGraph& Graph, ERiverEdgeKind Kind,
  *                                const TArray<FGuid>& NodeIds, FRiverWidth Width,
  *                                FGuid& OutEdgeId);
  */
-export function createEdge(
+export function createSpline(
   graph: RiverGraphV2,
-  kind: EdgeKind,
+  kind: SplineKind,
   nodeIds: NodeId[],
   width: Width
-): CreateEdgeResult {
-  // Note: Allow edge with 1 node for initial creation (UX convenience)
-  // Curve rendering will require at least 2 nodes, but graph can store 1-node edge
+): CreateSplineResult {
+  // Note: Allow spline with 1 node for initial creation (UX convenience)
+  // Curve rendering will require at least 2 nodes, but graph can store 1-node spline
   if (nodeIds.length < 1) {
-    throw new Error('Cannot create edge with no nodes');
+    throw new Error('Cannot create spline with no nodes');
   }
 
   const newGraph = cloneGraph(graph);
-  const edgeId = makeEdgeId(generateId());
+  const splineId = makeSplineId(generateId());
 
-  const edge: Edge = {
-    id: edgeId,
+  const spline: Spline = {
+    id: splineId,
     kind,
     nodeIds: nodeIds as string[],
     parentId: null,           // Independent river by default
@@ -217,63 +244,63 @@ export function createEdge(
     children: [],             // No children by default
   };
 
-  newGraph.edges[edgeId] = edge;
+  newGraph.splines[splineId] = spline;
 
-  // If this is the first 'river' edge and no mainEdgeId set, make it main
-  if (kind === 'river' && newGraph.mainEdgeId === null) {
-    newGraph.mainEdgeId = edgeId;
+  // If this is the first 'river' spline and no mainSplineId set, make it main
+  if (kind === 'river' && newGraph.mainSplineId === null) {
+    newGraph.mainSplineId = splineId;
   }
 
   return {
     graph: newGraph,
-    edgeId,
+    splineId,
   };
 }
 
 /**
- * Splits an edge by inserting a new node at the specified index
+ * Splits an spline by inserting a new node at the specified index
  *
  * The new node is inserted between nodeIds[atIndex] and nodeIds[atIndex+1].
  * The node position should be computed externally (e.g., from curve interpolation).
  *
  * @param graph - Current graph state
- * @param edgeId - ID of edge to split
+ * @param splineId - ID of spline to split
  * @param newNodeId - ID of the new node to insert (must already exist in graph.nodes)
  * @param atIndex - Index where to insert the node (0-based)
- * @returns New graph with edge split
+ * @returns New graph with spline split
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
- * static FRiverGraph SplitEdge(const FRiverGraph& Graph, const FGuid& EdgeId,
+ * static FRiverGraph SplitSpline(const FRiverGraph& Graph, const FGuid& SplineId,
  *                               const FGuid& NewNodeId, int32 AtIndex);
  */
-export function splitEdge(
+export function splitSpline(
   graph: RiverGraphV2,
-  edgeId: EdgeId,
+  splineId: SplineId,
   newNodeId: NodeId,
   atIndex: number
 ): RiverGraphV2 {
   const newGraph = cloneGraph(graph);
-  const edge = newGraph.edges[edgeId];
+  const spline = newGraph.splines[splineId];
 
-  if (!edge) {
-    throw new Error(`Edge ${edgeId} not found`);
+  if (!spline) {
+    throw new Error(`Spline ${splineId} not found`);
   }
 
   if (!newGraph.nodes[newNodeId]) {
     throw new Error(`Node ${newNodeId} not found`);
   }
 
-  if (atIndex < 0 || atIndex >= edge.nodeIds.length) {
-    throw new Error(`Invalid index ${atIndex} for edge with ${edge.nodeIds.length} nodes`);
+  if (atIndex < 0 || atIndex >= spline.nodeIds.length) {
+    throw new Error(`Invalid index ${atIndex} for spline with ${spline.nodeIds.length} nodes`);
   }
 
   // Insert new node at specified index
-  const newNodeIds = [...edge.nodeIds];
+  const newNodeIds = [...spline.nodeIds];
   newNodeIds.splice(atIndex + 1, 0, newNodeId as string);
 
-  newGraph.edges[edgeId] = {
-    ...edge,
+  newGraph.splines[splineId] = {
+    ...spline,
     nodeIds: newNodeIds,
   };
 
@@ -281,27 +308,27 @@ export function splitEdge(
 }
 
 /**
- * Deletes an edge from the graph
+ * Deletes an spline from the graph
  *
- * Note: This does not delete the nodes that were part of the edge.
+ * Note: This does not delete the nodes that were part of the spline.
  * Use with deleteNode() if you want to clean up orphaned nodes.
  *
  * @param graph - Current graph state
- * @param edgeId - ID of edge to delete
- * @returns New graph with edge removed
+ * @param splineId - ID of spline to delete
+ * @returns New graph with spline removed
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
- * static FRiverGraph DeleteEdge(const FRiverGraph& Graph, const FGuid& EdgeId);
+ * static FRiverGraph DeleteSpline(const FRiverGraph& Graph, const FGuid& SplineId);
  */
-export function deleteEdge(graph: RiverGraphV2, edgeId: EdgeId): RiverGraphV2 {
+export function deleteSpline(graph: RiverGraphV2, splineId: SplineId): RiverGraphV2 {
   const newGraph = cloneGraph(graph);
 
-  delete newGraph.edges[edgeId];
+  delete newGraph.splines[splineId];
 
-  // If we deleted the main edge, clear mainEdgeId
-  if (newGraph.mainEdgeId === edgeId) {
-    newGraph.mainEdgeId = null;
+  // If we deleted the main spline, clear mainSplineId
+  if (newGraph.mainSplineId === splineId) {
+    newGraph.mainSplineId = null;
   }
 
   return newGraph;
@@ -311,7 +338,7 @@ export function deleteEdge(graph: RiverGraphV2, edgeId: EdgeId): RiverGraphV2 {
  * Attaches an independent river as a tributary to a parent river at a junction node
  *
  * This operation (following invariants V2-V7):
- * 1. Sets tributary's parentId to parent river edge
+ * 1. Sets tributary's parentId to parent river spline
  * 2. Sets parentJunction to the junction node
  * 3. Changes kind to 'tributary'
  * 4. Makes last node of tributary (mouth) the junction node
@@ -319,13 +346,13 @@ export function deleteEdge(graph: RiverGraphV2, edgeId: EdgeId): RiverGraphV2 {
  * 6. Applies width constraint (V7): min(child.widthPx, parent.widthPx)
  *
  * @param graph - Current graph state
- * @param childEdgeId - ID of edge to attach as tributary
- * @param parentEdgeId - ID of parent river edge
+ * @param childSplineId - ID of spline to attach as tributary
+ * @param parentSplineId - ID of parent river spline
  * @param junctionNodeId - ID of node where tributary joins (must be in parent.nodeIds[1..last])
  * @returns New graph with tributary attached
  *
  * @throws If child already has tributaries (V3), child already attached (V2),
- *         junction not in valid position (V5), or edges not found
+ *         junction not in valid position (V5), or splines not found
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
@@ -334,30 +361,30 @@ export function deleteEdge(graph: RiverGraphV2, edgeId: EdgeId): RiverGraphV2 {
  */
 export function attachTributary(
   graph: RiverGraphV2,
-  childEdgeId: EdgeId,
-  parentEdgeId: EdgeId,
+  childSplineId: SplineId,
+  parentSplineId: SplineId,
   junctionNodeId: NodeId
 ): RiverGraphV2 {
   const newGraph = cloneGraph(graph);
-  const childEdge = newGraph.edges[childEdgeId];
-  const parentEdge = newGraph.edges[parentEdgeId];
+  const childSpline = newGraph.splines[childSplineId];
+  const parentSpline = newGraph.splines[parentSplineId];
 
-  if (!childEdge) {
-    throw new Error(`Child edge ${childEdgeId} not found`);
+  if (!childSpline) {
+    throw new Error(`Child spline ${childSplineId} not found`);
   }
 
-  if (!parentEdge) {
-    throw new Error(`Parent edge ${parentEdgeId} not found`);
+  if (!parentSpline) {
+    throw new Error(`Parent spline ${parentSplineId} not found`);
   }
 
   // V3: Rivers with tributaries cannot be tributaries themselves
-  if (childEdge.children.length > 0) {
-    throw new Error(`Edge ${childEdgeId} has tributaries and cannot be attached as tributary`);
+  if (childSpline.children.length > 0) {
+    throw new Error(`Spline ${childSplineId} has tributaries and cannot be attached as tributary`);
   }
 
   // V2: Child cannot already be attached
-  if (childEdge.parentId !== null) {
-    throw new Error(`Edge ${childEdgeId} is already attached to ${childEdge.parentId}`);
+  if (childSpline.parentId !== null) {
+    throw new Error(`Spline ${childSplineId} is already attached to ${childSpline.parentId}`);
   }
 
   if (!newGraph.nodes[junctionNodeId]) {
@@ -365,36 +392,53 @@ export function attachTributary(
   }
 
   // V5: Junction must be in parent.nodeIds[1..last] (not at index 0 = source)
-  const junctionIndex = parentEdge.nodeIds.indexOf(junctionNodeId as string);
+  const junctionIndex = parentSpline.nodeIds.indexOf(junctionNodeId as string);
   if (junctionIndex < 1) {
     throw new Error(`Junction node must not be at source (index 0) of parent river`);
   }
 
   // Update child: set mouth (last node) to junction
-  const newNodeIds = [...childEdge.nodeIds];
+  const newNodeIds = [...childSpline.nodeIds];
   newNodeIds[newNodeIds.length - 1] = junctionNodeId as string;
 
-  // V7: Apply width constraint if relative
-  let newWidth = childEdge.width;
-  if (childEdge.width.kind === 'relative' && parentEdge.width.kind === 'px') {
-    const childWidthPx = (childEdge.width.value / 100) * parentEdge.width.value;
-    newWidth = { kind: 'px', value: Math.min(childWidthPx, parentEdge.width.value) };
+  const clampRelative = (value: number) => Math.max(5, Math.min(100, value));
+
+  // V7: Normalize width to relative percent of parent width
+  let newWidth = childSpline.width;
+  if (parentSpline.width.kind === 'px' && parentSpline.width.value > 0) {
+    if (childSpline.width.kind === 'relative') {
+      newWidth = {
+        kind: 'relative',
+        value: clampRelative(childSpline.width.value),
+      };
+    } else {
+      const percent = (childSpline.width.value / parentSpline.width.value) * 100;
+      newWidth = {
+        kind: 'relative',
+        value: clampRelative(percent),
+      };
+    }
+  } else if (childSpline.width.kind !== 'relative') {
+    newWidth = {
+      kind: 'relative',
+      value: clampRelative(childSpline.width.value),
+    };
   }
 
-  // Update child edge
-  newGraph.edges[childEdgeId] = {
-    ...childEdge,
+  // Update child spline
+  newGraph.splines[childSplineId] = {
+    ...childSpline,
     kind: 'tributary',
     nodeIds: newNodeIds,
-    parentId: parentEdgeId,
-    parentJunction: junctionNodeId as string,
+    parentId: parentSplineId,
+    parentJunction: junctionNodeId,
     width: newWidth,
   };
 
   // Update parent: add child to children array
-  newGraph.edges[parentEdgeId] = {
-    ...parentEdge,
-    children: [...parentEdge.children, childEdgeId],
+  newGraph.splines[parentSplineId] = {
+    ...parentSpline,
+    children: [...parentSpline.children, childSplineId],
   };
 
   return newGraph;
@@ -412,7 +456,7 @@ export function attachTributary(
  * 6. Optionally creates a new mouth node to separate from junction
  *
  * @param graph - Current graph state
- * @param tribEdgeId - ID of tributary edge to detach
+ * @param tribEdgeId - ID of tributary spline to detach
  * @param createNewMouthNode - If true, creates a new node for the mouth (default: false)
  * @returns New graph with tributary detached (and optionally new mouth node ID)
  *
@@ -423,27 +467,27 @@ export function attachTributary(
  */
 export function detachTributary(
   graph: RiverGraphV2,
-  tribEdgeId: EdgeId,
+  tribSplineId: SplineId,
   createNewMouthNode: boolean = false
 ): AddNodeResult {
   const newGraph = cloneGraph(graph);
-  const tribEdge = newGraph.edges[tribEdgeId];
+  const tribSpline = newGraph.splines[tribSplineId];
 
-  if (!tribEdge) {
-    throw new Error(`Tributary edge ${tribEdgeId} not found`);
+  if (!tribSpline) {
+    throw new Error(`Tributary spline ${tribSplineId} not found`);
   }
 
-  if (tribEdge.kind !== 'tributary') {
-    throw new Error(`Edge ${tribEdgeId} is not a tributary`);
+  if (tribSpline.kind !== 'tributary') {
+    throw new Error(`Spline ${tribSplineId} is not a tributary`);
   }
 
-  const parentEdgeId = tribEdge.parentId;
-  if (!parentEdgeId) {
-    throw new Error(`Tributary ${tribEdgeId} has no parent (already detached?)`);
+  const parentSplineId = tribSpline.parentId;
+  if (!parentSplineId) {
+    throw new Error(`Tributary ${tribSplineId} has no parent (already detached?)`);
   }
 
   // Get mouth node (last node in tributary)
-  let newMouthNodeId: NodeId = tribEdge.nodeIds[tribEdge.nodeIds.length - 1] as NodeId;
+  let newMouthNodeId: NodeId = tribSpline.nodeIds[tribSpline.nodeIds.length - 1] as NodeId;
 
   // Optionally create a new mouth node
   if (createNewMouthNode && newMouthNodeId) {
@@ -454,31 +498,43 @@ export function detachTributary(
       newMouthNodeId = addResult.nodeId;
 
       // Update tributary to use new mouth node
-      const newNodeIds = [...tribEdge.nodeIds];
+      const newNodeIds = [...tribSpline.nodeIds];
       newNodeIds[newNodeIds.length - 1] = newMouthNodeId as string;
-      newGraph.edges[tribEdgeId] = {
-        ...tribEdge,
+      newGraph.splines[tribSplineId] = {
+        ...tribSpline,
         nodeIds: newNodeIds,
       };
     }
   }
 
   // Remove tributary from parent's children array
-  const parentEdge = newGraph.edges[parentEdgeId];
-  if (parentEdge) {
-    newGraph.edges[parentEdgeId] = {
-      ...parentEdge,
-      children: parentEdge.children.filter(id => id !== tribEdgeId),
+  const parentSpline = newGraph.splines[parentSplineId];
+  if (parentSpline) {
+    newGraph.splines[parentSplineId] = {
+      ...parentSpline,
+      children: parentSpline.children.filter(id => id !== tribSplineId),
     };
   }
 
+  // Resolve width to absolute pixels when becoming an independent river
+  let detachedWidth = newGraph.splines[tribSplineId].width;
+  if (detachedWidth.kind === 'relative') {
+    const parentSpline = newGraph.splines[parentSplineId];
+    if (parentSpline && parentSpline.width.kind === 'px') {
+      detachedWidth = {
+        kind: 'px',
+        value: (detachedWidth.value / 100) * parentSpline.width.value,
+      };
+    }
+  }
+
   // Detach tributary: make it independent river
-  newGraph.edges[tribEdgeId] = {
-    ...newGraph.edges[tribEdgeId],
+  newGraph.splines[tribSplineId] = {
+    ...newGraph.splines[tribSplineId],
     kind: 'river',
     parentId: null,
     parentJunction: null,
-    // V7: width remains as-is (already in px if it was relative)
+    width: detachedWidth,
   };
 
   return {
@@ -488,7 +544,7 @@ export function detachTributary(
 }
 
 /**
- * Reverses the direction of an edge by reversing its nodeIds array
+ * Reverses the direction of an spline by reversing its nodeIds array
  *
  * This operation (following invariant V1):
  * - Reverses nodeIds: [source, ..., mouth] becomes [mouth, ..., source]
@@ -499,55 +555,55 @@ export function detachTributary(
  * - Converting "backwards" river to proper downstream flow
  *
  * @param graph - Current graph state
- * @param edgeId - ID of edge to reverse
- * @returns New graph with edge direction reversed
+ * @param splineId - ID of spline to reverse
+ * @returns New graph with spline direction reversed
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
- * static FRiverGraph ReverseEdge(const FRiverGraph& Graph, const FGuid& EdgeId);
+ * static FRiverGraph ReverseSpline(const FRiverGraph& Graph, const FGuid& SplineId);
  */
-export function reverseEdge(graph: RiverGraphV2, edgeId: EdgeId): RiverGraphV2 {
+export function reverseSpline(graph: RiverGraphV2, splineId: SplineId): RiverGraphV2 {
   const newGraph = cloneGraph(graph);
-  const edge = newGraph.edges[edgeId];
+  const spline = newGraph.splines[splineId];
 
-  if (!edge) {
-    throw new Error(`Edge ${edgeId} not found`);
+  if (!spline) {
+    throw new Error(`Spline ${splineId} not found`);
   }
 
   // Reverse the nodeIds array
-  newGraph.edges[edgeId] = {
-    ...edge,
-    nodeIds: [...edge.nodeIds].reverse(),
+  newGraph.splines[splineId] = {
+    ...spline,
+    nodeIds: [...spline.nodeIds].reverse(),
   };
 
   return newGraph;
 }
 
 /**
- * Extends an edge upstream by adding a new node at the source end
+ * Extends an spline upstream by adding a new node at the source end
  *
  * @param graph - Current graph state
- * @param edgeId - ID of edge to extend
+ * @param splineId - ID of spline to extend
  * @param x - X coordinate of new source node
  * @param y - Y coordinate of new source node
- * @returns New graph with edge extended upstream and new node ID
+ * @returns New graph with spline extended upstream and new node ID
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
- * static FRiverGraph ExtendUpstream(const FRiverGraph& Graph, const FGuid& EdgeId,
+ * static FRiverGraph ExtendUpstream(const FRiverGraph& Graph, const FGuid& SplineId,
  *                                    float X, float Y, FGuid& OutNewNodeId);
  */
 export function extendUpstream(
   graph: RiverGraphV2,
-  edgeId: EdgeId,
+  splineId: SplineId,
   x: number,
   y: number
 ): AddNodeResult {
   const newGraph = cloneGraph(graph);
-  const edge = newGraph.edges[edgeId];
+  const spline = newGraph.splines[splineId];
 
-  if (!edge) {
-    throw new Error(`Edge ${edgeId} not found`);
+  if (!spline) {
+    throw new Error(`Spline ${splineId} not found`);
   }
 
   // Create new node
@@ -555,10 +611,10 @@ export function extendUpstream(
   const newNodeId = addResult.nodeId;
   newGraph.nodes = addResult.graph.nodes;
 
-  // Prepend new node to edge (becomes new source)
-  newGraph.edges[edgeId] = {
-    ...edge,
-    nodeIds: [newNodeId as string, ...edge.nodeIds],
+  // Prepend new node to spline (becomes new source)
+  newGraph.splines[splineId] = {
+    ...spline,
+    nodeIds: [newNodeId as string, ...spline.nodeIds],
   };
 
   return {
@@ -568,32 +624,32 @@ export function extendUpstream(
 }
 
 /**
- * Extends an edge downstream by adding a new node at the mouth end
+ * Extends an spline downstream by adding a new node at the mouth end
  *
  * This operation allows extending from mouth even if it's a junction node (V5 case).
  *
  * @param graph - Current graph state
- * @param edgeId - ID of edge to extend
+ * @param splineId - ID of spline to extend
  * @param x - X coordinate of new mouth node
  * @param y - Y coordinate of new mouth node
- * @returns New graph with edge extended downstream and new node ID
+ * @returns New graph with spline extended downstream and new node ID
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
- * static FRiverGraph ExtendDownstream(const FRiverGraph& Graph, const FGuid& EdgeId,
+ * static FRiverGraph ExtendDownstream(const FRiverGraph& Graph, const FGuid& SplineId,
  *                                      float X, float Y, FGuid& OutNewNodeId);
  */
 export function extendDownstream(
   graph: RiverGraphV2,
-  edgeId: EdgeId,
+  splineId: SplineId,
   x: number,
   y: number
 ): AddNodeResult {
   const newGraph = cloneGraph(graph);
-  const edge = newGraph.edges[edgeId];
+  const spline = newGraph.splines[splineId];
 
-  if (!edge) {
-    throw new Error(`Edge ${edgeId} not found`);
+  if (!spline) {
+    throw new Error(`Spline ${splineId} not found`);
   }
 
   // Create new node
@@ -601,10 +657,10 @@ export function extendDownstream(
   const newNodeId = addResult.nodeId;
   newGraph.nodes = addResult.graph.nodes;
 
-  // Append new node to edge (becomes new mouth)
-  newGraph.edges[edgeId] = {
-    ...edge,
-    nodeIds: [...edge.nodeIds, newNodeId as string],
+  // Append new node to spline (becomes new mouth)
+  newGraph.splines[splineId] = {
+    ...spline,
+    nodeIds: [...spline.nodeIds, newNodeId as string],
   };
 
   return {
@@ -614,10 +670,10 @@ export function extendDownstream(
 }
 
 /**
- * Inserts a new node between two existing nodes in an edge
+ * Inserts a new node between two existing nodes in an spline
  *
  * @param graph - Current graph state
- * @param edgeId - ID of edge to insert into
+ * @param splineId - ID of spline to insert into
  * @param afterIndex - Index after which to insert (new node goes at afterIndex + 1)
  * @param x - X coordinate of new node
  * @param y - Y coordinate of new node
@@ -625,25 +681,25 @@ export function extendDownstream(
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
- * static FRiverGraph InsertBetween(const FRiverGraph& Graph, const FGuid& EdgeId,
+ * static FRiverGraph InsertBetween(const FRiverGraph& Graph, const FGuid& SplineId,
  *                                   int32 AfterIndex, float X, float Y, FGuid& OutNewNodeId);
  */
 export function insertBetween(
   graph: RiverGraphV2,
-  edgeId: EdgeId,
+  splineId: SplineId,
   afterIndex: number,
   x: number,
   y: number
 ): AddNodeResult {
   const newGraph = cloneGraph(graph);
-  const edge = newGraph.edges[edgeId];
+  const spline = newGraph.splines[splineId];
 
-  if (!edge) {
-    throw new Error(`Edge ${edgeId} not found`);
+  if (!spline) {
+    throw new Error(`Spline ${splineId} not found`);
   }
 
-  if (afterIndex < 0 || afterIndex >= edge.nodeIds.length) {
-    throw new Error(`Invalid afterIndex ${afterIndex} for edge with ${edge.nodeIds.length} nodes`);
+  if (afterIndex < 0 || afterIndex >= spline.nodeIds.length) {
+    throw new Error(`Invalid afterIndex ${afterIndex} for spline with ${spline.nodeIds.length} nodes`);
   }
 
   // Create new node
@@ -652,11 +708,11 @@ export function insertBetween(
   newGraph.nodes = addResult.graph.nodes;
 
   // Insert new node after afterIndex
-  const newNodeIds = [...edge.nodeIds];
+  const newNodeIds = [...spline.nodeIds];
   newNodeIds.splice(afterIndex + 1, 0, newNodeId as string);
 
-  newGraph.edges[edgeId] = {
-    ...edge,
+  newGraph.splines[splineId] = {
+    ...spline,
     nodeIds: newNodeIds,
   };
 
@@ -667,32 +723,32 @@ export function insertBetween(
 }
 
 /**
- * Updates the width of an edge
+ * Updates the width of an spline
  *
  * @param graph - Current graph state
- * @param edgeId - ID of edge to update
+ * @param splineId - ID of spline to update
  * @param width - New width specification
- * @returns New graph with edge width updated
+ * @returns New graph with spline width updated
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
- * static FRiverGraph UpdateEdgeWidth(const FRiverGraph& Graph, const FGuid& EdgeId,
+ * static FRiverGraph UpdateSplineWidth(const FRiverGraph& Graph, const FGuid& SplineId,
  *                                     FRiverWidth NewWidth);
  */
-export function updateEdgeWidth(
+export function updateSplineWidth(
   graph: RiverGraphV2,
-  edgeId: EdgeId,
+  splineId: SplineId,
   width: Width
 ): RiverGraphV2 {
   const newGraph = cloneGraph(graph);
-  const edge = newGraph.edges[edgeId];
+  const spline = newGraph.splines[splineId];
 
-  if (!edge) {
-    throw new Error(`Edge ${edgeId} not found`);
+  if (!spline) {
+    throw new Error(`Spline ${splineId} not found`);
   }
 
-  newGraph.edges[edgeId] = {
-    ...edge,
+  newGraph.splines[splineId] = {
+    ...spline,
     width: { ...width },
   };
 
@@ -709,7 +765,7 @@ export function updateEdgeWidth(
 export function createEmptyGraph(): RiverGraphV2 {
   return {
     nodes: {},
-    edges: {},
-    mainEdgeId: null,
+    splines: {},
+    mainSplineId: null,
   };
 }
