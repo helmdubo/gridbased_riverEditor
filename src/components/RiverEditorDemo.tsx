@@ -124,19 +124,30 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     activeSplineId,
   ]);
 
-  // Handle canvas click
+  const handleStageClick = useCallback((x: number, y: number) => {
+    console.log('🖱️ Stage click:', { x, y });
+    addPointToActiveSpline(x, y, tributaryWidthPercent);
+    console.log(
+      '📊 Graph updated - nodes:',
+      Object.keys(riverGraph.nodes).length,
+      'splines:',
+      Object.keys(riverGraph.splines).length
+    );
+  }, [addPointToActiveSpline, tributaryWidthPercent, riverGraph]);
+
+  // Handle canvas click (fallback)
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    console.log('🖱️ Canvas click:', { x, y });
-    addPointToActiveSpline(x, y, tributaryWidthPercent);
-    console.log('📊 Graph updated - nodes:', Object.keys(riverGraph.nodes).length, 'splines:', Object.keys(riverGraph.splines).length);
+    handleStageClick(e.clientX - rect.left, e.clientY - rect.top);
   };
+
+  const handleOverlayBackgroundClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    handleStageClick(e.clientX - rect.left, e.clientY - rect.top);
+  }, [handleStageClick]);
 
   // Node interaction handlers
   const handlePointMouseDown = useCallback((pointId: string) => {
@@ -217,7 +228,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       const newY = Math.max(0, Math.min(rows * gridSize, y));
       moveNode(makeNodeId(draggingTributaryInfo.pointId), newX, newY);
     }
-  }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraph, cols, gridSize]);
+  }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraph, cols, rows, gridSize]);
 
   const handleOverlayMouseUp = useCallback(() => {
     if (draggingPointId || draggingTributaryInfo) {
@@ -394,7 +405,9 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
           fontFamily: 'monospace',
           fontSize: '12px',
           lineHeight: '1.6',
-          minHeight: '220px',
+          minHeight: '240px',
+          maxHeight: '260px',
+          overflowY: 'auto',
         }}>
           <strong style={{ color: '#10b981' }}>Graph State:</strong>
           <div style={{ marginLeft: '10px', marginTop: '5px' }}>
@@ -497,6 +510,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
           onMouseMove={handleOverlayMouseMove}
           onMouseUp={handleOverlayMouseUp}
           onMouseLeave={handleOverlayMouseLeave}
+          onBackgroundClick={handleOverlayBackgroundClick}
           onPointMouseDown={handlePointMouseDown}
           onPointClick={handlePointClick}
           onPointDoubleClick={handlePointDoubleClick}

@@ -268,11 +268,18 @@ export function canAttachToNode(
     };
   }
 
-  // Cannot attach to source of main river
+  // Cannot attach to source or mouth of main river
   if (nodeIndex === 0) {
     return {
       valid: false,
       error: 'Cannot attach to river source node',
+    };
+  }
+
+  if (nodeIndex === mainSpline.nodeIds.length - 1) {
+    return {
+      valid: false,
+      error: 'Cannot attach to river mouth node',
     };
   }
 

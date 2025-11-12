@@ -22,6 +22,7 @@ interface RiverOverlayProps {
   onMouseMove: (e: React.MouseEvent<SVGSVGElement>) => void;
   onMouseUp: () => void;
   onMouseLeave: () => void;
+  onBackgroundClick?: (e: React.MouseEvent<SVGSVGElement>) => void;
   onPointMouseDown: (pointId: string) => void;
   onPointClick: (e: React.MouseEvent, pointId: string) => void;
   onPointDoubleClick: (e: React.MouseEvent, pointId: string) => void;
@@ -49,6 +50,7 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
   onMouseMove,
   onMouseUp,
   onMouseLeave,
+  onBackgroundClick,
   onPointMouseDown,
   onPointClick,
   onPointDoubleClick,
@@ -61,10 +63,15 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
       ref={overlayRef}
       width={width}
       height={height}
-      style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}
+      style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'auto' }}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
       onMouseLeave={onMouseLeave}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          onBackgroundClick?.(event);
+        }
+      }}
     >
       {/* Insert point preview */}
       {insertPointPreview && (
