@@ -385,12 +385,15 @@ export class RenderService {
       const tribCurve = getCurvePoints(trib.points);
       if (tribCurve.length > 1) {
         const isActive = options.activeSplineId === id;
-        const isDetached = trib.isDetached;
+        const isDetached = trib.isDetached && !trib.isIndependent;
+        const isIndependent = !!trib.isIndependent;
 
         ctx.strokeStyle = isDetached
           ? COLORS.TRIBUTARY_DETACHED
           : isActive
           ? COLORS.TRIBUTARY_ACTIVE
+          : isIndependent
+          ? COLORS.TRIBUTARY_INACTIVE
           : COLORS.TRIBUTARY_INACTIVE;
         ctx.lineWidth = isActive ? 3 : 2;
         ctx.lineCap = 'round';

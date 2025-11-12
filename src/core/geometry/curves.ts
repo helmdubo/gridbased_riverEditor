@@ -75,7 +75,7 @@ export function getCurvePoints(
   controlPoints: Point[],
   segments: number = CURVE_CONSTANTS.DEFAULT_SEGMENTS
 ): CurvePoints {
-  // Edge case: less than 2 points
+  // Spline case: less than 2 points
   if (controlPoints.length < 2) {
     return {
       points: [...controlPoints],

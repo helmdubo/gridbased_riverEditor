@@ -7,7 +7,7 @@
  * @module core/graph/validation
  */
 
-import type { RiverGraphV2, NodeId, EdgeId, Edge } from './types';
+import type { RiverGraphV2, NodeId, SplineId, Spline } from './types';
 
 /**
  * Validation result with optional error message
@@ -18,42 +18,39 @@ export interface ValidationResult {
 }
 
 /**
- * Validates a single edge for structural correctness
+ * Validates a single spline for structural correctness
  *
  * Checks:
- * - Edge has at least 2 nodes (a segment needs start and end)
+ * - Spline has at least 2 nodes (a segment needs start and end)
  * - All referenced nodes exist in the graph
- * - Node IDs are unique within the edge
+ * - Node IDs are unique within the spline
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintPure)
- * static bool ValidateEdge(const FRiverGraph& Graph, const FRiverEdge& Edge, FString& OutError);
+ * static bool ValidateSpline(const FRiverGraph& Graph, const FRiverEdge& Spline, FString& OutError);
  */
-export function validateEdge(graph: RiverGraphV2, edge: Edge): ValidationResult {
-  // Check minimum node count
-  if (edge.nodeIds.length < 2) {
+export function validateSpline(graph: RiverGraphV2, spline: Spline): ValidationResult {
+  if (spline.nodeIds.length < 1) {
     return {
       valid: false,
-      error: `Edge ${edge.id} must have at least 2 nodes, has ${edge.nodeIds.length}`,
+      error: `Spline ${spline.id} must contain at least one node`,
     };
   }
 
-  // Check all nodes exist
-  for (const nodeId of edge.nodeIds) {
+  for (const nodeId of spline.nodeIds) {
     if (!graph.nodes[nodeId]) {
       return {
         valid: false,
-        error: `Edge ${edge.id} references non-existent node ${nodeId}`,
+        error: `Spline ${spline.id} references non-existent node ${nodeId}`,
       };
     }
   }
 
-  // Check for duplicate nodes in edge
-  const uniqueNodes = new Set(edge.nodeIds);
-  if (uniqueNodes.size !== edge.nodeIds.length) {
+  const uniqueNodes = new Set(spline.nodeIds);
+  if (uniqueNodes.size !== spline.nodeIds.length) {
     return {
       valid: false,
-      error: `Edge ${edge.id} contains duplicate node IDs`,
+      error: `Spline ${spline.id} contains duplicate node IDs`,
     };
   }
 
@@ -64,10 +61,10 @@ export function validateEdge(graph: RiverGraphV2, edge: Edge): ValidationResult 
  * Validates the entire graph for structural correctness
  *
  * Checks:
- * - All edges are valid (via validateEdge)
- * - Main edge exists if mainEdgeId is set
- * - Main edge has kind='main'
- * - No orphaned nodes (nodes not referenced by any edge)
+ * - All splines are valid (via validateSpline)
+ * - Main spline exists if mainSplineId is set
+ * - Main spline has kind='main'
+ * - No orphaned nodes (nodes not referenced by any spline)
  * - Tributary parent junctions exist and are valid
  * - Detached tributaries have parentJunction=null
  *
@@ -76,81 +73,82 @@ export function validateEdge(graph: RiverGraphV2, edge: Edge): ValidationResult 
  * static bool IsValidGraph(const FRiverGraph& Graph, FString& OutError);
  */
 export function isValidGraph(graph: RiverGraphV2): ValidationResult {
-  // Check main edge
-  if (graph.mainEdgeId !== null) {
-    const mainEdge = graph.edges[graph.mainEdgeId];
-    if (!mainEdge) {
+  if (graph.mainSplineId !== null) {
+    const mainSpline = graph.splines[graph.mainSplineId];
+    if (!mainSpline) {
       return {
         valid: false,
-        error: `Main edge ${graph.mainEdgeId} does not exist`,
+        error: `Main spline ${graph.mainSplineId} does not exist`,
       };
     }
-    if (mainEdge.kind !== 'main') {
+
+    if (mainSpline.kind !== 'river') {
       return {
         valid: false,
-        error: `Main edge ${graph.mainEdgeId} has wrong kind: ${mainEdge.kind}`,
+        error: `Main spline ${graph.mainSplineId} must be of kind 'river'`,
+      };
+    }
+
+    if (mainSpline.parentId !== null || mainSpline.parentJunction !== null) {
+      return {
+        valid: false,
+        error: `Main spline ${graph.mainSplineId} cannot have a parent`,
       };
     }
   }
 
-  // Validate all edges
-  for (const edge of Object.values(graph.edges)) {
-    const edgeValidation = validateEdge(graph, edge);
-    if (!edgeValidation.valid) {
-      return edgeValidation;
+  for (const spline of Object.values(graph.splines)) {
+    const validation = validateSpline(graph, spline);
+    if (!validation.valid) {
+      return validation;
     }
 
-    // Check tributary-specific constraints
-    if (edge.kind === 'tributary') {
-      if (!edge.isDetached && edge.parentJunction === null) {
+    if (spline.kind === 'tributary') {
+      if (spline.parentId === null || spline.parentJunction === null) {
         return {
           valid: false,
-          error: `Attached tributary ${edge.id} must have parentJunction`,
+          error: `Tributary ${spline.id} must have parentId and parentJunction`,
         };
       }
-      if (edge.isDetached && edge.parentJunction !== null) {
-        return {
-          valid: false,
-          error: `Detached tributary ${edge.id} must have parentJunction=null`,
-        };
-      }
-      if (edge.parentJunction !== null && !graph.nodes[edge.parentJunction]) {
-        return {
-          valid: false,
-          error: `Tributary ${edge.id} references non-existent junction ${edge.parentJunction}`,
-        };
-      }
-    }
 
-    // Check main edge constraints
-    if (edge.kind === 'main') {
-      if (edge.parentJunction !== null) {
+      const parentSpline = graph.splines[spline.parentId];
+      if (!parentSpline) {
         return {
           valid: false,
-          error: `Main edge ${edge.id} must have parentJunction=null`,
+          error: `Tributary ${spline.id} references non-existent parent ${spline.parentId}`,
         };
       }
-      if (edge.isDetached) {
+
+      if (!parentSpline.nodeIds.includes(spline.parentJunction as string)) {
         return {
           valid: false,
-          error: `Main edge ${edge.id} cannot be detached`,
+          error: `Junction ${spline.parentJunction} is not part of parent spline ${parentSpline.id}`,
+        };
+      }
+    } else {
+      if (spline.parentId !== null || spline.parentJunction !== null) {
+        return {
+          valid: false,
+          error: `Independent spline ${spline.id} must not have parent references`,
         };
       }
     }
-  }
 
-  // Check for orphaned nodes (nodes not used by any edge)
-  const usedNodes = new Set<string>();
-  for (const edge of Object.values(graph.edges)) {
-    edge.nodeIds.forEach((nodeId) => usedNodes.add(nodeId));
-  }
+    for (const childId of spline.children) {
+      const childSpline = graph.splines[childId];
+      if (!childSpline) {
+        return {
+          valid: false,
+          error: `Spline ${spline.id} references non-existent child ${childId}`,
+        };
+      }
 
-  for (const nodeId of Object.keys(graph.nodes)) {
-    if (!usedNodes.has(nodeId)) {
-      return {
-        valid: false,
-        error: `Orphaned node ${nodeId} is not referenced by any edge`,
-      };
+      if (childSpline.parentId !== spline.id) {
+        return {
+          valid: false,
+          error: `Child spline ${childId} does not link back to parent ${spline.id}`,
+        };
+      }
     }
   }
 
@@ -158,7 +156,7 @@ export function isValidGraph(graph: RiverGraphV2): ValidationResult {
 }
 
 /**
- * Checks if a node is a junction (connected to 2+ edges)
+ * Checks if a node is a junction (connected to 2+ splines)
  *
  * Junction nodes are where tributaries meet the main river,
  * or where multiple tributaries meet.
@@ -170,8 +168,8 @@ export function isValidGraph(graph: RiverGraphV2): ValidationResult {
 export function isJunctionNode(graph: RiverGraphV2, nodeId: NodeId): boolean {
   let edgeCount = 0;
 
-  for (const edge of Object.values(graph.edges)) {
-    if (edge.nodeIds.includes(nodeId as string)) {
+  for (const spline of Object.values(graph.splines)) {
+    if (spline.nodeIds.includes(nodeId as string)) {
       edgeCount++;
       if (edgeCount >= 2) {
         return true;
@@ -185,7 +183,7 @@ export function isJunctionNode(graph: RiverGraphV2, nodeId: NodeId): boolean {
 /**
  * Finds all junction nodes in the graph
  *
- * Returns an array of NodeIds that are shared by 2+ edges.
+ * Returns an array of NodeIds that are shared by 2+ splines.
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintPure)
@@ -194,9 +192,9 @@ export function isJunctionNode(graph: RiverGraphV2, nodeId: NodeId): boolean {
 export function findJunctionNodes(graph: RiverGraphV2): NodeId[] {
   const nodeCounts = new Map<string, number>();
 
-  // Count edge references for each node
-  for (const edge of Object.values(graph.edges)) {
-    for (const nodeId of edge.nodeIds) {
+  // Count spline references for each node
+  for (const spline of Object.values(graph.splines)) {
+    for (const nodeId of spline.nodeIds) {
       nodeCounts.set(nodeId as string, (nodeCounts.get(nodeId as string) || 0) + 1);
     }
   }
@@ -238,28 +236,31 @@ export function canAttachToNode(
     };
   }
 
-  // If already a junction, always allowed
+  // If already a junction, disallow attaching new tributary
   if (isJunctionNode(graph, nodeId)) {
-    return { valid: true };
+    return {
+      valid: false,
+      error: 'Node already acts as a junction',
+    };
   }
 
   // Check if node is part of main river
-  if (graph.mainEdgeId === null) {
+  if (graph.mainSplineId === null) {
     return {
       valid: false,
       error: 'Cannot attach tributary: no main river exists',
     };
   }
 
-  const mainEdge = graph.edges[graph.mainEdgeId];
-  if (!mainEdge) {
+  const mainSpline = graph.splines[graph.mainSplineId];
+  if (!mainSpline) {
     return {
       valid: false,
-      error: 'Cannot attach tributary: main edge not found',
+      error: 'Cannot attach tributary: main spline not found',
     };
   }
 
-  const nodeIndex = mainEdge.nodeIds.indexOf(nodeId as string);
+  const nodeIndex = mainSpline.nodeIds.indexOf(nodeId as string);
   if (nodeIndex === -1) {
     return {
       valid: false,
@@ -267,11 +268,18 @@ export function canAttachToNode(
     };
   }
 
-  // Cannot attach to endpoints (first or last node) of main river
-  if (nodeIndex === 0 || nodeIndex === mainEdge.nodeIds.length - 1) {
+  // Cannot attach to source or mouth of main river
+  if (nodeIndex === 0) {
     return {
       valid: false,
-      error: 'Cannot attach to river endpoints (mouth or source)',
+      error: 'Cannot attach to river source node',
+    };
+  }
+
+  if (nodeIndex === mainSpline.nodeIds.length - 1) {
+    return {
+      valid: false,
+      error: 'Cannot attach to river mouth node',
     };
   }
 
@@ -279,18 +287,18 @@ export function canAttachToNode(
 }
 
 /**
- * Gets all edges connected to a node
+ * Gets all splines connected to a node
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintPure)
- * static TArray<FGuid> GetConnectedEdges(const FRiverGraph& Graph, const FGuid& NodeId);
+ * static TArray<FGuid> GetConnectedSplines(const FRiverGraph& Graph, const FGuid& NodeId);
  */
-export function getConnectedEdges(graph: RiverGraphV2, nodeId: NodeId): EdgeId[] {
-  const connectedEdges: EdgeId[] = [];
+export function getConnectedSplines(graph: RiverGraphV2, nodeId: NodeId): SplineId[] {
+  const connectedEdges: SplineId[] = [];
 
-  for (const edge of Object.values(graph.edges)) {
-    if (edge.nodeIds.includes(nodeId as string)) {
-      connectedEdges.push(edge.id);
+  for (const spline of Object.values(graph.splines)) {
+    if (spline.nodeIds.includes(nodeId as string)) {
+      connectedEdges.push(spline.id);
     }
   }
 
@@ -298,28 +306,28 @@ export function getConnectedEdges(graph: RiverGraphV2, nodeId: NodeId): EdgeId[]
 }
 
 /**
- * Checks if a node is an endpoint (first or last) of an edge
+ * Checks if a node is an endpoint (first or last) of an spline
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintPure)
- * static bool IsEndpoint(const FRiverEdge& Edge, const FGuid& NodeId);
+ * static bool IsEndpoint(const FRiverEdge& Spline, const FGuid& NodeId);
  */
-export function isEndpoint(edge: Edge, nodeId: NodeId): boolean {
-  if (edge.nodeIds.length === 0) return false;
+export function isEndpoint(spline: Spline, nodeId: NodeId): boolean {
+  if (spline.nodeIds.length === 0) return false;
   return (
-    edge.nodeIds[0] === nodeId ||
-    edge.nodeIds[edge.nodeIds.length - 1] === nodeId
+    spline.nodeIds[0] === nodeId ||
+    spline.nodeIds[spline.nodeIds.length - 1] === nodeId
   );
 }
 
 /**
- * Gets the index of a node within an edge's nodeIds array
+ * Gets the index of a node within an spline's nodeIds array
  *
- * @returns Index of node in edge, or -1 if not found
+ * @returns Index of node in spline, or -1 if not found
  * @ue_equivalent
  * UFUNCTION(BlueprintPure)
- * static int32 GetNodeIndexInEdge(const FRiverEdge& Edge, const FGuid& NodeId);
+ * static int32 GetNodeIndexInEdge(const FRiverEdge& Spline, const FGuid& NodeId);
  */
-export function getNodeIndexInEdge(edge: Edge, nodeId: NodeId): number {
-  return edge.nodeIds.indexOf(nodeId as string);
+export function getNodeIndexInEdge(spline: Spline, nodeId: NodeId): number {
+  return spline.nodeIds.indexOf(nodeId as string);
 }
