@@ -91,8 +91,10 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
       {/* Tributary points */}
       {Array.from(riverGraph.tributaries.values()).map((trib) =>
         trib.points.map((p, idx) => {
+          const isIndependent = !!trib.isIndependent;
           const isMouth = idx === 0;
-          if (isMouth && !trib.isDetached) return null;
+          const hideAttachedMouth = isMouth && !trib.isDetached && !isIndependent;
+          if (hideAttachedMouth) return null;
 
           return (
             <PointMarker
@@ -101,7 +103,7 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
               isHovered={hoveredTributaryId === trib.id && hoveredTributaryPointId === p.id}
               isActive={activeSplineId === trib.id}
               isJunction={false}
-              isDetached={trib.isDetached}
+              isDetached={trib.isDetached && !isIndependent}
               isSnapTarget={false}
               onMouseDown={() => onTributaryPointMouseDown(trib.id, p.id, isMouth)}
               onClick={(e) => onTributaryPointClick(e, trib.id, p.id)}
@@ -122,7 +124,7 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
             point={p}
             isHovered={hoveredPointId === p.id}
             isSelected={selectedPointId === p.id}
-            isActive={false}
+            isActive={activeSplineId === 'main'}
             isJunction={isJunction}
             isDetached={false}
             isSnapTarget={isSnapTarget}

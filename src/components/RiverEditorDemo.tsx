@@ -1,7 +1,7 @@
 /**
  * River Editor Demo - Minimal implementation using V2 architecture
  *
- * This is a simplified version for testing the new Node-Edge architecture.
+ * This is a simplified version for testing the new Node-Spline architecture.
  * Uses useRiverGraphV2 and useRiverRendererV2 with all P0 bugfixes included.
  */
 
@@ -11,6 +11,9 @@ import { useRiverRendererV2 } from '@hooks/useRiverRendererV2';
 import { RiverOverlay } from './RiverEditor/RiverOverlay';
 import { DEFAULT_GRID_SIZE, DEFAULT_MAIN_RIVERBED_WIDTH, DEFAULT_RIVER_TYPE } from '@domain/constants';
 import type { RiverType } from '@domain/models/types';
+import GraphService from '@services/GraphService';
+import type { NodeId, SplineId } from '@/core/graph/types';
+import { makeNodeId } from '@/core/graph/types';
 
 interface RiverEditorDemoProps {
   cols: number;
@@ -29,44 +32,44 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   const [hoveredPointId, setHoveredPointId] = useState<string | null>(null);
   const [hoveredTributaryId, setHoveredTributaryId] = useState<string | null>(null);
   const [hoveredTributaryPointId, setHoveredTributaryPointId] = useState<string | null>(null);
-  const [draggingPointId, setDraggingPointId] = useState<string | null>(null);
+  const [draggingPointId, setDraggingPointId] = useState<NodeId | null>(null);
   const [draggingTributaryInfo, setDraggingTributaryInfo] = useState<{ id: string; pointId: string; isMouth: boolean } | null>(null);
   const overlayRef = useRef<SVGSVGElement>(null);
 
   // River graph state (V2)
   const {
     riverGraph,
-    addPointToActiveEdge,
+    addPointToActiveSpline,
     selectedNodeId,
     selectNode,
     moveNode,
     deleteNode,
-    clearAll,
+    beginNewSpline,
+    activeSplineId,
+    setActiveSpline,
   } = useRiverGraphV2();
 
   // Create new independent river
   const handleCreateNewRiver = () => {
     console.log('🆕 Creating new independent river');
-    // TODO: Implement multi-river support
-    // For now, just clear and start fresh
-    clearAll();
+    beginNewSpline(mainRiverbedWidth);
   };
 
-  // Get detailed info about selected node and its edge
+  // Get detailed info about selected node and its spline
   const getSelectedNodeInfo = () => {
     if (!selectedNodeId) return null;
 
-    // Find which edge contains this node
-    const edgeWithNode = Object.values(riverGraph.edges).find(edge =>
-      edge.nodeIds.includes(selectedNodeId as string)
+    // Find which spline contains this node
+    const splineWithNode = Object.values(riverGraph.splines).find((spline) =>
+      spline.nodeIds.includes(selectedNodeId as string)
     );
 
-    if (!edgeWithNode) return null;
+    if (!splineWithNode) return null;
 
-    const nodeIndex = edgeWithNode.nodeIds.indexOf(selectedNodeId as string);
+    const nodeIndex = splineWithNode.nodeIds.indexOf(selectedNodeId as string);
     const isSource = nodeIndex === 0;
-    const isMouth = nodeIndex === edgeWithNode.nodeIds.length - 1;
-    const isJunction = edgeWithNode.children.length > 0 && edgeWithNode.nodeIds[nodeIndex] === selectedNodeId;
+    const isMouth = nodeIndex === splineWithNode.nodeIds.length - 1;
+    const isJunction = GraphService.isJunctionNode(riverGraph, selectedNodeId);
 
     let nodeType = 'mid';
     if (isSource) nodeType = 'source';
@@ -74,10 +77,10 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     if (isJunction) nodeType += '+junction';
 
     return {
-      edge: edgeWithNode,
+      spline: splineWithNode,
       nodeIndex,
       nodeType,
-      totalNodes: edgeWithNode.nodeIds.length,
+      totalNodes: splineWithNode.nodeIds.length,
     };
   };
 
@@ -104,14 +107,22 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       showDebugZones: false,
       arrowSpacing: 1,
       flowStrength: 1.0,
-      activeSplineId: 'main',
+      activeSplineId: activeSplineId ?? 'main',
       snapTargetPointId: null,
       splineSnapInfo: null,
       hoveredSegment: null,
       insertPointPreview: null,
       mainRiverbedWidth,
     }, riverType);
-  }, [riverGraph, render, showFlowMap, showFlowArrows, riverType, mainRiverbedWidth]);
+  }, [
+    riverGraph,
+    render,
+    showFlowMap,
+    showFlowArrows,
+    riverType,
+    mainRiverbedWidth,
+    activeSplineId,
+  ]);
 
   // Handle canvas click
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -123,27 +134,30 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     const y = e.clientY - rect.top;
 
     console.log('🖱️ Canvas click:', { x, y });
-    addPointToActiveEdge(x, y, tributaryWidthPercent);
-    console.log('📊 Graph updated - nodes:', Object.keys(riverGraph.nodes).length, 'edges:', Object.keys(riverGraph.edges).length);
+    addPointToActiveSpline(x, y, tributaryWidthPercent);
+    console.log('📊 Graph updated - nodes:', Object.keys(riverGraph.nodes).length, 'splines:', Object.keys(riverGraph.splines).length);
   };
 
   // Node interaction handlers
   const handlePointMouseDown = useCallback((pointId: string) => {
     console.log('🖱️ Point mouse down:', pointId);
-    setDraggingPointId(pointId);
-    selectNode(pointId);
-  }, [selectNode]);
+    const nodeId = makeNodeId(pointId);
+    setDraggingPointId(nodeId);
+    selectNode(nodeId);
+    setActiveSpline('main');
+  }, [selectNode, setActiveSpline]);
 
   const handlePointClick = useCallback((e: React.MouseEvent, pointId: string) => {
     e.stopPropagation();
     console.log('🖱️ Point click:', pointId);
-    selectNode(pointId);
-  }, [selectNode]);
+    selectNode(makeNodeId(pointId));
+    setActiveSpline('main');
+  }, [selectNode, setActiveSpline]);
 
   const handlePointDoubleClick = useCallback((e: React.MouseEvent, pointId: string) => {
     e.stopPropagation();
     console.log('🗑️ Delete node:', pointId);
-    deleteNode(pointId);
+    deleteNode(makeNodeId(pointId));
   }, [deleteNode]);
 
   const handleOverlayMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
@@ -201,8 +215,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     if (draggingTributaryInfo) {
       const newX = Math.max(0, Math.min(cols * gridSize, x));
       const newY = Math.max(0, Math.min(rows * gridSize, y));
-      // TODO: Move tributary node (need to implement in useRiverGraphV2)
-      console.log('🔄 Dragging tributary node:', draggingTributaryInfo, 'to', { x: newX, y: newY });
+      moveNode(makeNodeId(draggingTributaryInfo.pointId), newX, newY);
     }
   }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraph, cols, gridSize]);
 
@@ -226,14 +239,16 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   const handleTributaryPointMouseDown = useCallback((id: string, pointId: string, isMouth: boolean) => {
     console.log('🖱️ Tributary point mouse down:', { id, pointId, isMouth });
     setDraggingTributaryInfo({ id, pointId, isMouth });
-    selectNode(pointId);
-  }, [selectNode]);
+    selectNode(makeNodeId(pointId));
+    setActiveSpline(id as SplineId);
+  }, [selectNode, setActiveSpline]);
 
   const handleTributaryPointClick = useCallback((e: React.MouseEvent, id: string, pointId: string) => {
     e.stopPropagation();
     console.log('🖱️ Tributary point click:', { id, pointId });
-    selectNode(pointId);
-  }, [selectNode]);
+    selectNode(makeNodeId(pointId));
+    setActiveSpline(id as SplineId);
+  }, [selectNode, setActiveSpline]);
 
   const handleTributaryPointDoubleClick = useCallback((e: React.MouseEvent, id: string, pointId: string) => {
     e.stopPropagation();
@@ -255,7 +270,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       {/* Header */}
       <div>
         <h1 style={{ margin: 0, fontSize: '24px' }}>
-          River Editor V2 Demo - Node-Edge Architecture
+          River Editor V2 Demo - Node-Spline Architecture
         </h1>
         <p style={{ margin: '8px 0 0 0', color: '#888' }}>
           ✅ P0 Bugfixes: devicePixelRatio (DPR) | FlowSign | segIndexAt | Pointer Capture (coming)
@@ -379,12 +394,13 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
           fontFamily: 'monospace',
           fontSize: '12px',
           lineHeight: '1.6',
+          minHeight: '220px',
         }}>
           <strong style={{ color: '#10b981' }}>Graph State:</strong>
           <div style={{ marginLeft: '10px', marginTop: '5px' }}>
             <div>Total Nodes: <span style={{ color: '#fbbf24' }}>{Object.keys(riverGraph.nodes).length}</span></div>
-            <div>Total Edges: <span style={{ color: '#fbbf24' }}>{Object.keys(riverGraph.edges).length}</span></div>
-            <div>Main River: <span style={{ color: '#fbbf24' }}>{riverGraph.mainEdgeId ? 'Yes' : 'No'}</span></div>
+            <div>Total Splines: <span style={{ color: '#fbbf24' }}>{Object.keys(riverGraph.splines).length}</span></div>
+            <div>Main River: <span style={{ color: '#fbbf24' }}>{riverGraph.mainSplineId ? 'Yes' : 'No'}</span></div>
           </div>
 
           {(() => {
@@ -397,8 +413,8 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
               );
             }
 
-            const edge = info.edge;
-            const isMainRiver = riverGraph.mainEdgeId === edge.id;
+            const spline = info.spline;
+            const isMainRiver = riverGraph.mainSplineId === spline.id;
 
             return (
               <div style={{ marginTop: '10px' }}>
@@ -410,33 +426,33 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
                 </div>
 
                 <div style={{ marginTop: '8px' }}>
-                  <strong style={{ color: '#3b82f6' }}>Edge (River):</strong>
+                  <strong style={{ color: '#3b82f6' }}>Spline (River):</strong>
                   <div style={{ marginLeft: '10px', marginTop: '5px' }}>
-                    <div>ID: <span style={{ color: '#a855f7' }}>{edge.id.slice(0, 8)}...</span></div>
-                    <div>Kind: <span style={{ color: '#10b981' }}>{edge.kind}</span> {isMainRiver && '(main)'}</div>
-                    <div>Nodes: <span style={{ color: '#fbbf24' }}>{edge.nodeIds.length}</span></div>
-                    <div>Width: <span style={{ color: '#fbbf24' }}>{edge.width.kind === 'px' ? `${edge.width.value}px` : `${edge.width.value}%`}</span></div>
-                    {edge.parentId && (
+                    <div>ID: <span style={{ color: '#a855f7' }}>{spline.id.slice(0, 8)}...</span></div>
+                    <div>Kind: <span style={{ color: '#10b981' }}>{spline.kind}</span> {isMainRiver && '(main)'}</div>
+                    <div>Nodes: <span style={{ color: '#fbbf24' }}>{spline.nodeIds.length}</span></div>
+                    <div>Width: <span style={{ color: '#fbbf24' }}>{spline.width.kind === 'px' ? `${spline.width.value}px` : `${spline.width.value}%`}</span></div>
+                    {spline.parentId && (
                       <>
-                        <div>Parent: <span style={{ color: '#a855f7' }}>{edge.parentId.slice(0, 8)}...</span></div>
-                        <div>Junction: <span style={{ color: '#a855f7' }}>{edge.parentJunction?.slice(0, 8)}...</span></div>
+                        <div>Parent: <span style={{ color: '#a855f7' }}>{spline.parentId.slice(0, 8)}...</span></div>
+                        <div>Junction: <span style={{ color: '#a855f7' }}>{spline.parentJunction?.slice(0, 8)}...</span></div>
                       </>
                     )}
-                    {edge.children.length > 0 && (
-                      <div>Children: <span style={{ color: '#10b981' }}>{edge.children.length} tributary(ies)</span></div>
+                    {spline.children.length > 0 && (
+                      <div>Children: <span style={{ color: '#10b981' }}>{spline.children.length} tributary(ies)</span></div>
                     )}
                   </div>
                 </div>
 
-                {edge.children.length > 0 && (
+                {spline.children.length > 0 && (
                   <div style={{ marginTop: '8px' }}>
                     <strong style={{ color: '#10b981' }}>Tributaries:</strong>
-                    {edge.children.map((childId, idx) => {
-                      const childEdge = riverGraph.edges[childId];
-                      if (!childEdge) return null;
+                    {spline.children.map((childId, idx) => {
+                      const childSpline = riverGraph.splines[childId];
+                      if (!childSpline) return null;
                       return (
                         <div key={childId} style={{ marginLeft: '10px', marginTop: '3px', color: '#888' }}>
-                          {idx + 1}. {childId.slice(0, 8)}... ({childEdge.nodeIds.length} nodes)
+                          {idx + 1}. {childId.slice(0, 8)}... ({childSpline.nodeIds.length} nodes)
                         </div>
                       );
                     })}
@@ -471,7 +487,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
           width={cols * gridSize}
           height={rows * gridSize}
           riverGraph={legacyGraph}
-          activeSplineId="main"
+          activeSplineId={activeSplineId ?? 'main'}
           selectedPointId={selectedNodeId}
           hoveredPointId={hoveredPointId}
           hoveredTributaryId={hoveredTributaryId}
