@@ -1,5 +1,5 @@
 /**
- * Core Node-Edge graph types for river system
+ * Core Node-Spline graph types for river system
  *
  * This module defines the fundamental data model for the river editor.
  * All types are designed to be easily portable to UE5.6 Blueprints/C++.
@@ -14,19 +14,19 @@
 export type NodeId = string & { readonly __brand: 'NodeId' };
 
 /**
- * Unique identifier for an edge
+ * Unique identifier for a spline (entire river polyline)
  * @ue_equivalent FGuid or FName in UE5
  */
-export type EdgeId = string & { readonly __brand: 'EdgeId' };
+export type SplineId = string & { readonly __brand: 'SplineId' };
 
 /**
- * Edge kind - distinguishes independent rivers from tributaries
- * 'river' = independent watercourse (may be main via mainEdgeId or separate)
+ * Spline kind - distinguishes independent rivers from tributaries
+ * 'river' = independent watercourse (may be main via mainSplineId or separate)
  * 'tributary' = child watercourse attached to parent river
  *
  * @ue_equivalent UENUM() in C++
  */
-export type EdgeKind = 'river' | 'tributary';
+export type SplineKind = 'river' | 'tributary';
 
 /**
  * Width specification - either absolute pixels or relative to parent
@@ -62,9 +62,9 @@ export interface Node {
 }
 
 /**
- * Graph edge representing a river segment (independent river or tributary)
+ * Graph spline representing a river (independent river or tributary)
  *
- * An edge is defined by an ordered list of nodes it passes through.
+ * A spline is defined by an ordered list of nodes it passes through.
  * The order of nodeIds defines downstream flow: nodeIds[0] = source, nodeIds[last] = mouth.
  *
  * Invariants:
@@ -78,35 +78,35 @@ export interface Node {
  *
  * @ue_equivalent
  * USTRUCT(BlueprintType)
- * struct FRiverEdge {
+ * struct FRiverSpline {
  *   UPROPERTY() FGuid Id;
- *   UPROPERTY() ERiverEdgeKind Kind;
+ *   UPROPERTY() ERiverSplineKind Kind;
  *   UPROPERTY() TArray<FGuid> NodeIds;
  *   UPROPERTY() FGuid ParentId;           // null for independent rivers
  *   UPROPERTY() FGuid ParentJunction;     // NodeId where tributary joins parent
  *   UPROPERTY() FRiverWidth Width;
- *   UPROPERTY() TArray<FGuid> Children;   // EdgeIds of attached tributaries
+ *   UPROPERTY() TArray<FGuid> Children;   // SplineIds of attached tributaries
  * };
  */
-export interface Edge {
-  /** Unique edge identifier */
-  id: EdgeId;
+export interface Spline {
+  /** Unique spline identifier */
+  id: SplineId;
 
-  /** Edge type: 'river' for independent, 'tributary' for attached child */
-  kind: EdgeKind;
+  /** Spline type: 'river' for independent, 'tributary' for attached child */
+  kind: SplineKind;
 
   /**
-   * Ordered list of node IDs defining the edge path (downstream direction)
+   * Ordered list of node IDs defining the spline path (downstream direction)
    * nodeIds[0] = source (upstream), nodeIds[last] = mouth (downstream)
    * Stored as strings for easier serialization and Record key matching
    */
   nodeIds: string[];
 
   /**
-   * Parent river EdgeId (null for independent rivers)
-   * When attached as tributary, this points to the parent river edge
+   * Parent river SplineId (null for independent rivers)
+   * When attached as tributary, this points to the parent river spline
    */
-  parentId: EdgeId | null;
+  parentId: SplineId | null;
 
   /**
    * NodeId where this tributary joins the parent river (null if not attached)
@@ -118,14 +118,14 @@ export interface Edge {
   width: Width;
 
   /**
-   * EdgeIds of tributaries attached to this river (empty array for tributaries)
+   * SplineIds of tributaries attached to this river (empty array for tributaries)
    * Invariant: children.length > 0 ⇒ parentId === null
    */
-  children: EdgeId[];
+  children: SplineId[];
 }
 
 /**
- * Complete river graph representation (Node-Edge model)
+ * Complete river graph representation (Node-Spline model)
  *
  * This is the core data structure that replaces the old point-based model.
  * Advantages:
@@ -137,19 +137,19 @@ export interface Edge {
  * USTRUCT(BlueprintType)
  * struct FRiverGraph {
  *   UPROPERTY() TMap<FGuid, FRiverNode> Nodes;
- *   UPROPERTY() TMap<FGuid, FRiverEdge> Edges;
- *   UPROPERTY() FGuid MainEdgeId;
+ *   UPROPERTY() TMap<FGuid, FRiverSpline> Splines;
+ *   UPROPERTY() FGuid MainSplineId;
  * };
  */
 export interface RiverGraphV2 {
   /** All nodes in the graph, indexed by ID */
   nodes: Record<string, Node>;
 
-  /** All edges in the graph, indexed by ID */
-  edges: Record<string, Edge>;
+  /** All splines in the graph, indexed by ID */
+  splines: Record<string, Spline>;
 
-  /** ID of the main river edge (null if no main river exists yet) */
-  mainEdgeId: EdgeId | null;
+  /** ID of the main river spline (null if no main river exists yet) */
+  mainSplineId: SplineId | null;
 }
 
 /**
@@ -160,9 +160,9 @@ export function isNodeId(value: unknown): value is NodeId {
 }
 
 /**
- * Type guard to check if a value is a valid EdgeId
+ * Type guard to check if a value is a valid SplineId
  */
-export function isEdgeId(value: unknown): value is EdgeId {
+export function isSplineId(value: unknown): value is SplineId {
   return typeof value === 'string' && value.length > 0;
 }
 
@@ -189,11 +189,11 @@ export function makeNodeId(id: string): NodeId {
 }
 
 /**
- * Helper to create an EdgeId from a string (with type safety)
+ * Helper to create a SplineId from a string (with type safety)
  * @ue_equivalent FGuid::NewGuid() in UE5
  */
-export function makeEdgeId(id: string): EdgeId {
-  return id as EdgeId;
+export function makeSplineId(id: string): SplineId {
+  return id as SplineId;
 }
 
 /**

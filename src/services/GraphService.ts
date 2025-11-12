@@ -7,7 +7,7 @@
  * All methods return new graph instances (immutable operations).
  */
 
-import type { RiverGraphV2, NodeId, EdgeId, Width, EdgeKind } from '@/core/graph/types';
+import type { RiverGraphV2, NodeId, SplineId, Width, SplineKind } from '@/core/graph/types';
 import { makeWidthPx, makeWidthRelative } from '@/core/graph/types';
 import * as graphOps from '@/core/graph/operations';
 import * as graphValidation from '@/core/graph/validation';
@@ -52,19 +52,19 @@ export class GraphService {
   }
 
   /**
-   * Creates a new edge (river or tributary)
+   * Creates a new spline (river or tributary)
    */
-  static createEdge(
+  static createSpline(
     graph: RiverGraphV2,
-    kind: EdgeKind,
+    kind: SplineKind,
     nodeIds: NodeId[],
     width: Width
   ) {
-    return graphOps.createEdge(graph, kind, nodeIds, width);
+    return graphOps.createSpline(graph, kind, nodeIds, width);
   }
 
   /**
-   * Creates a main river edge with absolute width in pixels
+   * Creates a main river spline with absolute width in pixels
    */
   static createMainRiver(
     graph: RiverGraphV2,
@@ -72,11 +72,11 @@ export class GraphService {
     widthPixels: number
   ) {
     const width = makeWidthPx(widthPixels);
-    return graphOps.createEdge(graph, 'river', nodeIds, width);
+    return graphOps.createSpline(graph, 'river', nodeIds, width);
   }
 
   /**
-   * Creates a tributary edge with relative width (percentage)
+   * Creates a tributary spline with relative width (percentage)
    */
   static createTributary(
     graph: RiverGraphV2,
@@ -84,26 +84,26 @@ export class GraphService {
     widthPercent: number
   ) {
     const width = makeWidthRelative(widthPercent);
-    return graphOps.createEdge(graph, 'tributary', nodeIds, width);
+    return graphOps.createSpline(graph, 'tributary', nodeIds, width);
   }
 
   /**
-   * Splits an edge by inserting a new node
+   * Splits an spline by inserting a new node
    */
-  static splitEdge(
+  static splitSpline(
     graph: RiverGraphV2,
-    edgeId: EdgeId,
+    splineId: SplineId,
     newNodeId: NodeId,
     atIndex: number
   ): RiverGraphV2 {
-    return graphOps.splitEdge(graph, edgeId, newNodeId, atIndex);
+    return graphOps.splitSpline(graph, splineId, newNodeId, atIndex);
   }
 
   /**
-   * Deletes an edge from the graph
+   * Deletes an spline from the graph
    */
-  static deleteEdge(graph: RiverGraphV2, edgeId: EdgeId): RiverGraphV2 {
-    return graphOps.deleteEdge(graph, edgeId);
+  static deleteSpline(graph: RiverGraphV2, splineId: SplineId): RiverGraphV2 {
+    return graphOps.deleteSpline(graph, splineId);
   }
 
   /**
@@ -111,10 +111,11 @@ export class GraphService {
    */
   static attachTributary(
     graph: RiverGraphV2,
-    tribEdgeId: EdgeId,
+    tribSplineId: SplineId,
+    parentSplineId: SplineId,
     junctionNodeId: NodeId
   ): RiverGraphV2 {
-    return graphOps.attachTributary(graph, tribEdgeId, junctionNodeId);
+    return graphOps.attachTributary(graph, tribSplineId, parentSplineId, junctionNodeId);
   }
 
   /**
@@ -122,49 +123,49 @@ export class GraphService {
    */
   static detachTributary(
     graph: RiverGraphV2,
-    tribEdgeId: EdgeId,
+    tribSplineId: SplineId,
     createNewMouthNode: boolean = false
   ) {
-    return graphOps.detachTributary(graph, tribEdgeId, createNewMouthNode);
+    return graphOps.detachTributary(graph, tribSplineId, createNewMouthNode);
   }
 
   /**
-   * Updates the width of an edge
+   * Updates the width of an spline
    */
-  static updateEdgeWidth(
+  static updateSplineWidth(
     graph: RiverGraphV2,
-    edgeId: EdgeId,
+    splineId: SplineId,
     width: Width
   ): RiverGraphV2 {
-    return graphOps.updateEdgeWidth(graph, edgeId, width);
+    return graphOps.updateSplineWidth(graph, splineId, width);
   }
 
   /**
-   * Reverses the direction of an edge
+   * Reverses the direction of an spline
    */
-  static reverseEdge(graph: RiverGraphV2, edgeId: EdgeId): RiverGraphV2 {
-    return graphOps.reverseEdge(graph, edgeId);
+  static reverseSpline(graph: RiverGraphV2, splineId: SplineId): RiverGraphV2 {
+    return graphOps.reverseSpline(graph, splineId);
   }
 
   /**
-   * Extends an edge upstream (adds node at source end)
+   * Extends an spline upstream (adds node at source end)
    */
-  static extendUpstream(graph: RiverGraphV2, edgeId: EdgeId, x: number, y: number) {
-    return graphOps.extendUpstream(graph, edgeId, x, y);
+  static extendUpstream(graph: RiverGraphV2, splineId: SplineId, x: number, y: number) {
+    return graphOps.extendUpstream(graph, splineId, x, y);
   }
 
   /**
-   * Extends an edge downstream (adds node at mouth end)
+   * Extends an spline downstream (adds node at mouth end)
    */
-  static extendDownstream(graph: RiverGraphV2, edgeId: EdgeId, x: number, y: number) {
-    return graphOps.extendDownstream(graph, edgeId, x, y);
+  static extendDownstream(graph: RiverGraphV2, splineId: SplineId, x: number, y: number) {
+    return graphOps.extendDownstream(graph, splineId, x, y);
   }
 
   /**
    * Inserts a node between two existing nodes
    */
-  static insertBetween(graph: RiverGraphV2, edgeId: EdgeId, afterIndex: number, x: number, y: number) {
-    return graphOps.insertBetween(graph, edgeId, afterIndex, x, y);
+  static insertBetween(graph: RiverGraphV2, splineId: SplineId, afterIndex: number, x: number, y: number) {
+    return graphOps.insertBetween(graph, splineId, afterIndex, x, y);
   }
 
   /**
@@ -175,7 +176,7 @@ export class GraphService {
   }
 
   /**
-   * Checks if a node is a junction (connected to 2+ edges)
+   * Checks if a node is a junction (connected to 2+ splines)
    */
   static isJunctionNode(graph: RiverGraphV2, nodeId: NodeId): boolean {
     return graphValidation.isJunctionNode(graph, nodeId);
@@ -196,25 +197,25 @@ export class GraphService {
   }
 
   /**
-   * Gets all edges connected to a node
+   * Gets all splines connected to a node
    */
-  static getConnectedEdges(graph: RiverGraphV2, nodeId: NodeId): EdgeId[] {
-    return graphValidation.getConnectedEdges(graph, nodeId);
+  static getConnectedSplines(graph: RiverGraphV2, nodeId: NodeId): SplineId[] {
+    return graphValidation.getConnectedSplines(graph, nodeId);
   }
 
   /**
-   * Gets the main edge from the graph
+   * Gets the main spline from the graph
    */
-  static getMainEdge(graph: RiverGraphV2) {
-    if (graph.mainEdgeId === null) return null;
-    return graph.edges[graph.mainEdgeId] || null;
+  static getMainSpline(graph: RiverGraphV2) {
+    if (graph.mainSplineId === null) return null;
+    return graph.splines[graph.mainSplineId] || null;
   }
 
   /**
-   * Gets all tributary edges
+   * Gets all tributary splines
    */
   static getTributaries(graph: RiverGraphV2) {
-    return Object.values(graph.edges).filter((edge) => edge.kind === 'tributary');
+    return Object.values(graph.splines).filter((spline) => spline.kind === 'tributary');
   }
 
   /**
@@ -222,8 +223,8 @@ export class GraphService {
    * Note: With new model, detached = parentId === null
    */
   static getDetachedTributaries(graph: RiverGraphV2) {
-    return Object.values(graph.edges).filter(
-      (edge) => edge.kind === 'tributary' && edge.parentId === null
+    return Object.values(graph.splines).filter(
+      (spline) => spline.kind === 'tributary' && spline.parentId === null
     );
   }
 
@@ -231,8 +232,8 @@ export class GraphService {
    * Gets all attached tributaries (tributaries attached to parent)
    */
   static getAttachedTributaries(graph: RiverGraphV2) {
-    return Object.values(graph.edges).filter(
-      (edge) => edge.kind === 'tributary' && edge.parentId !== null
+    return Object.values(graph.splines).filter(
+      (spline) => spline.kind === 'tributary' && spline.parentId !== null
     );
   }
 
@@ -244,10 +245,10 @@ export class GraphService {
   }
 
   /**
-   * Gets an edge by ID
+   * Gets an spline by ID
    */
-  static getEdge(graph: RiverGraphV2, edgeId: EdgeId) {
-    return graph.edges[edgeId] || null;
+  static getSpline(graph: RiverGraphV2, splineId: SplineId) {
+    return graph.splines[splineId] || null;
   }
 
   /**
@@ -258,69 +259,69 @@ export class GraphService {
   }
 
   /**
-   * Gets all edges in the graph
+   * Gets all splines in the graph
    */
-  static getAllEdges(graph: RiverGraphV2) {
-    return Object.values(graph.edges);
+  static getAllSplines(graph: RiverGraphV2) {
+    return Object.values(graph.splines);
   }
 
   /**
    * Checks if the graph has a main river
    */
   static hasMainRiver(graph: RiverGraphV2): boolean {
-    return graph.mainEdgeId !== null && !!graph.edges[graph.mainEdgeId];
+    return graph.mainSplineId !== null && !!graph.splines[graph.mainSplineId];
   }
 
   /**
-   * Gets the number of nodes in an edge
+   * Gets the number of nodes in an spline
    */
-  static getEdgeNodeCount(graph: RiverGraphV2, edgeId: EdgeId): number {
-    const edge = graph.edges[edgeId];
-    return edge ? edge.nodeIds.length : 0;
+  static getSplineNodeCount(graph: RiverGraphV2, splineId: SplineId): number {
+    const spline = graph.splines[splineId];
+    return spline ? spline.nodeIds.length : 0;
   }
 
   /**
-   * Gets node positions for an edge
+   * Gets node positions for an spline
    */
-  static getEdgeNodePositions(graph: RiverGraphV2, edgeId: EdgeId) {
-    const edge = graph.edges[edgeId];
-    if (!edge) return [];
+  static getSplineNodePositions(graph: RiverGraphV2, splineId: SplineId) {
+    const spline = graph.splines[splineId];
+    if (!spline) return [];
 
-    return edge.nodeIds.map((nodeId) => {
+    return spline.nodeIds.map((nodeId) => {
       const node = graph.nodes[nodeId];
       return node ? { x: node.x, y: node.y } : { x: 0, y: 0 };
     });
   }
 
   /**
-   * Adds a node to the end of an edge
+   * Adds a node to the end of an spline
    *
    * @param graph - Current graph
-   * @param edgeId - Edge to extend
+   * @param splineId - Spline to extend
    * @param x - X coordinate of new node
    * @param y - Y coordinate of new node
    * @returns Updated graph and new node ID
    */
-  static addNodeToEdge(graph: RiverGraphV2, edgeId: EdgeId, x: number, y: number) {
-    const edge = graph.edges[edgeId];
-    if (!edge) {
-      throw new Error(`Edge ${edgeId} not found`);
+  static addNodeToSpline(graph: RiverGraphV2, splineId: SplineId, x: number, y: number) {
+    const spline = graph.splines[splineId];
+    if (!spline) {
+      throw new Error(`Spline ${splineId} not found`);
     }
 
     // Add new node
     const { graph: graphWithNode, nodeId } = graphOps.addNode(graph, x, y);
 
-    // Add node to edge's nodeIds
+    // Add node to spline's nodeIds
     const updatedEdge = {
-      ...edge,
-      nodeIds: [...edge.nodeIds, nodeId as string],
+      ...spline,
+      nodeIds: [...spline.nodeIds, nodeId as string],
     };
 
     const finalGraph = {
       ...graphWithNode,
-      edges: {
-        ...graphWithNode.edges,
-        [edgeId]: updatedEdge,
+      splines: {
+        ...graphWithNode.splines,
+        [splineId]: updatedEdge,
       },
     };
 
@@ -328,10 +329,10 @@ export class GraphService {
   }
 
   /**
-   * Inserts a node into an edge after a specific node
+   * Inserts a node into an spline after a specific node
    *
    * @param graph - Current graph
-   * @param edgeId - Edge to modify
+   * @param splineId - Spline to modify
    * @param afterNodeId - Node after which to insert
    * @param x - X coordinate of new node
    * @param y - Y coordinate of new node
@@ -339,38 +340,38 @@ export class GraphService {
    */
   static insertNodeAfter(
     graph: RiverGraphV2,
-    edgeId: EdgeId,
+    splineId: SplineId,
     afterNodeId: NodeId,
     x: number,
     y: number
   ) {
-    const edge = graph.edges[edgeId];
-    if (!edge) {
-      throw new Error(`Edge ${edgeId} not found`);
+    const spline = graph.splines[splineId];
+    if (!spline) {
+      throw new Error(`Spline ${splineId} not found`);
     }
 
-    const afterIndex = edge.nodeIds.indexOf(afterNodeId as string);
+    const afterIndex = spline.nodeIds.indexOf(afterNodeId as string);
     if (afterIndex === -1) {
-      throw new Error(`Node ${afterNodeId} not found in edge ${edgeId}`);
+      throw new Error(`Node ${afterNodeId} not found in spline ${splineId}`);
     }
 
     // Add new node
     const { graph: graphWithNode, nodeId } = graphOps.addNode(graph, x, y);
 
-    // Insert node into edge's nodeIds
-    const newNodeIds = [...edge.nodeIds];
+    // Insert node into spline's nodeIds
+    const newNodeIds = [...spline.nodeIds];
     newNodeIds.splice(afterIndex + 1, 0, nodeId as string);
 
     const updatedEdge = {
-      ...edge,
+      ...spline,
       nodeIds: newNodeIds,
     };
 
     const finalGraph = {
       ...graphWithNode,
-      edges: {
-        ...graphWithNode.edges,
-        [edgeId]: updatedEdge,
+      splines: {
+        ...graphWithNode.splines,
+        [splineId]: updatedEdge,
       },
     };
 
@@ -381,16 +382,16 @@ export class GraphService {
    * Creates a new tributary starting from a junction node on the main river
    *
    * @param graph - Current graph
-   * @param parentEdgeId - Parent river edge ID (usually mainEdgeId)
+   * @param parentSplineId - Parent river spline ID (usually mainSplineId)
    * @param junctionNodeId - Node where tributary joins parent
    * @param x - X coordinate of first tributary node (source)
    * @param y - Y coordinate of first tributary node (source)
    * @param widthPercent - Width as percentage of parent river
-   * @returns Updated graph, new tributary edge ID, and new node ID
+   * @returns Updated graph, new tributary spline ID, and new node ID
    */
   static createTributaryFromJunction(
     graph: RiverGraphV2,
-    parentEdgeId: EdgeId,
+    parentSplineId: SplineId,
     junctionNodeId: NodeId,
     x: number,
     y: number,
@@ -399,10 +400,10 @@ export class GraphService {
     // Add new node for tributary source
     const { graph: graphWithNode, nodeId: newNodeId } = graphOps.addNode(graph, x, y);
 
-    // Create independent river edge (will be converted to tributary on attach)
+    // Create independent river spline (will be converted to tributary on attach)
     // nodeIds: [source, mouth] where mouth will be set to junction on attach
     const width = makeWidthRelative(widthPercent);
-    const { graph: graphWithEdge, edgeId: tribEdgeId } = graphOps.createEdge(
+    const { graph: graphWithEdge, splineId: tribSplineId } = graphOps.createSpline(
       graphWithNode,
       'river', // Start as river, will become tributary on attach
       [newNodeId, newNodeId], // Temporary: will be updated to [newNodeId, junctionNodeId]
@@ -412,12 +413,12 @@ export class GraphService {
     // Attach tributary to parent at junction
     const finalGraph = graphOps.attachTributary(
       graphWithEdge,
-      tribEdgeId,
-      parentEdgeId,
+      tribSplineId,
+      parentSplineId,
       junctionNodeId
     );
 
-    return { graph: finalGraph, tributaryId: tribEdgeId, newNodeId };
+    return { graph: finalGraph, tributaryId: tribSplineId, newNodeId };
   }
 }
 
