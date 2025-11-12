@@ -7,8 +7,8 @@
  * All methods return new graph instances (immutable operations).
  */
 
-import type { RiverGraphV2, NodeId, EdgeId, Width, FlowSign } from '@/core/graph/types';
-import { makeWidthAbs, makeWidthRel } from '@/core/graph/types';
+import type { RiverGraphV2, NodeId, EdgeId, Width, EdgeKind } from '@/core/graph/types';
+import { makeWidthPx, makeWidthRelative } from '@/core/graph/types';
 import * as graphOps from '@/core/graph/operations';
 import * as graphValidation from '@/core/graph/validation';
 
@@ -52,40 +52,39 @@ export class GraphService {
   }
 
   /**
-   * Creates a new edge (main river or tributary)
+   * Creates a new edge (river or tributary)
    */
   static createEdge(
     graph: RiverGraphV2,
-    kind: 'main' | 'tributary',
+    kind: EdgeKind,
     nodeIds: NodeId[],
-    width: Width,
-    flowSign: FlowSign = 1
+    width: Width
   ) {
-    return graphOps.createEdge(graph, kind, nodeIds, width, flowSign);
+    return graphOps.createEdge(graph, kind, nodeIds, width);
   }
 
   /**
-   * Creates a main river edge with absolute width
+   * Creates a main river edge with absolute width in pixels
    */
   static createMainRiver(
     graph: RiverGraphV2,
     nodeIds: NodeId[],
     widthPixels: number
   ) {
-    const width = makeWidthAbs(widthPixels);
-    return graphOps.createEdge(graph, 'main', nodeIds, width, 1);
+    const width = makeWidthPx(widthPixels);
+    return graphOps.createEdge(graph, 'river', nodeIds, width);
   }
 
   /**
-   * Creates a tributary edge with relative width
+   * Creates a tributary edge with relative width (percentage)
    */
   static createTributary(
     graph: RiverGraphV2,
     nodeIds: NodeId[],
     widthPercent: number
   ) {
-    const width = makeWidthRel(widthPercent);
-    return graphOps.createEdge(graph, 'tributary', nodeIds, width, 1);
+    const width = makeWidthRelative(widthPercent);
+    return graphOps.createEdge(graph, 'tributary', nodeIds, width);
   }
 
   /**
@@ -141,14 +140,31 @@ export class GraphService {
   }
 
   /**
-   * Updates the flow sign of an edge
+   * Reverses the direction of an edge
    */
-  static updateFlowSign(
-    graph: RiverGraphV2,
-    edgeId: EdgeId,
-    flowSign: FlowSign
-  ): RiverGraphV2 {
-    return graphOps.updateFlowSign(graph, edgeId, flowSign);
+  static reverseEdge(graph: RiverGraphV2, edgeId: EdgeId): RiverGraphV2 {
+    return graphOps.reverseEdge(graph, edgeId);
+  }
+
+  /**
+   * Extends an edge upstream (adds node at source end)
+   */
+  static extendUpstream(graph: RiverGraphV2, edgeId: EdgeId, x: number, y: number) {
+    return graphOps.extendUpstream(graph, edgeId, x, y);
+  }
+
+  /**
+   * Extends an edge downstream (adds node at mouth end)
+   */
+  static extendDownstream(graph: RiverGraphV2, edgeId: EdgeId, x: number, y: number) {
+    return graphOps.extendDownstream(graph, edgeId, x, y);
+  }
+
+  /**
+   * Inserts a node between two existing nodes
+   */
+  static insertBetween(graph: RiverGraphV2, edgeId: EdgeId, afterIndex: number, x: number, y: number) {
+    return graphOps.insertBetween(graph, edgeId, afterIndex, x, y);
   }
 
   /**
@@ -202,20 +218,21 @@ export class GraphService {
   }
 
   /**
-   * Gets all detached tributaries
+   * Gets all detached tributaries (tributaries not attached to parent)
+   * Note: With new model, detached = parentId === null
    */
   static getDetachedTributaries(graph: RiverGraphV2) {
     return Object.values(graph.edges).filter(
-      (edge) => edge.kind === 'tributary' && edge.isDetached
+      (edge) => edge.kind === 'tributary' && edge.parentId === null
     );
   }
 
   /**
-   * Gets all attached tributaries
+   * Gets all attached tributaries (tributaries attached to parent)
    */
   static getAttachedTributaries(graph: RiverGraphV2) {
     return Object.values(graph.edges).filter(
-      (edge) => edge.kind === 'tributary' && !edge.isDetached
+      (edge) => edge.kind === 'tributary' && edge.parentId !== null
     );
   }
 
@@ -361,37 +378,44 @@ export class GraphService {
   }
 
   /**
-   * Creates a new tributary starting from a junction node
+   * Creates a new tributary starting from a junction node on the main river
    *
    * @param graph - Current graph
-   * @param junctionNodeId - Node where tributary starts
-   * @param x - X coordinate of first tributary node
-   * @param y - Y coordinate of first tributary node
-   * @param widthPercent - Width as percentage of main river
-   * @returns Updated graph and new tributary edge ID
+   * @param parentEdgeId - Parent river edge ID (usually mainEdgeId)
+   * @param junctionNodeId - Node where tributary joins parent
+   * @param x - X coordinate of first tributary node (source)
+   * @param y - Y coordinate of first tributary node (source)
+   * @param widthPercent - Width as percentage of parent river
+   * @returns Updated graph, new tributary edge ID, and new node ID
    */
   static createTributaryFromJunction(
     graph: RiverGraphV2,
+    parentEdgeId: EdgeId,
     junctionNodeId: NodeId,
     x: number,
     y: number,
     widthPercent: number
   ) {
-    // Add new node for tributary
+    // Add new node for tributary source
     const { graph: graphWithNode, nodeId: newNodeId } = graphOps.addNode(graph, x, y);
 
-    // Create tributary edge (starts detached, we'll attach it immediately)
-    const width = makeWidthRel(widthPercent);
+    // Create independent river edge (will be converted to tributary on attach)
+    // nodeIds: [source, mouth] where mouth will be set to junction on attach
+    const width = makeWidthRelative(widthPercent);
     const { graph: graphWithEdge, edgeId: tribEdgeId } = graphOps.createEdge(
       graphWithNode,
-      'tributary',
-      [junctionNodeId, newNodeId],
-      width,
-      1
+      'river', // Start as river, will become tributary on attach
+      [newNodeId, newNodeId], // Temporary: will be updated to [newNodeId, junctionNodeId]
+      width
     );
 
-    // Attach tributary to junction
-    const finalGraph = graphOps.attachTributary(graphWithEdge, tribEdgeId, junctionNodeId);
+    // Attach tributary to parent at junction
+    const finalGraph = graphOps.attachTributary(
+      graphWithEdge,
+      tribEdgeId,
+      parentEdgeId,
+      junctionNodeId
+    );
 
     return { graph: finalGraph, tributaryId: tribEdgeId, newNodeId };
   }
