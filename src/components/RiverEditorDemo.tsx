@@ -12,7 +12,7 @@ import { RiverOverlay } from './RiverEditor/RiverOverlay';
 import { DEFAULT_GRID_SIZE, DEFAULT_MAIN_RIVERBED_WIDTH, DEFAULT_RIVER_TYPE } from '@domain/constants';
 import type { RiverType } from '@domain/models/types';
 import GraphService from '@services/GraphService';
-import type { NodeId } from '@/core/graph/types';
+import type { NodeId, SplineId } from '@/core/graph/types';
 import { makeNodeId } from '@/core/graph/types';
 
 interface RiverEditorDemoProps {
@@ -45,6 +45,8 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     moveNode,
     deleteNode,
     beginNewSpline,
+    activeSplineId,
+    setActiveSpline,
   } = useRiverGraphV2();
 
   // Create new independent river
@@ -105,28 +107,47 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       showDebugZones: false,
       arrowSpacing: 1,
       flowStrength: 1.0,
-      activeSplineId: 'main',
+      activeSplineId: activeSplineId ?? 'main',
       snapTargetPointId: null,
       splineSnapInfo: null,
       hoveredSegment: null,
       insertPointPreview: null,
       mainRiverbedWidth,
     }, riverType);
-  }, [riverGraph, render, showFlowMap, showFlowArrows, riverType, mainRiverbedWidth]);
+  }, [
+    riverGraph,
+    render,
+    showFlowMap,
+    showFlowArrows,
+    riverType,
+    mainRiverbedWidth,
+    activeSplineId,
+  ]);
 
-  // Handle canvas click
+  const handleStageClick = useCallback((x: number, y: number) => {
+    console.log('🖱️ Stage click:', { x, y });
+    addPointToActiveSpline(x, y, tributaryWidthPercent);
+    console.log(
+      '📊 Graph updated - nodes:',
+      Object.keys(riverGraph.nodes).length,
+      'splines:',
+      Object.keys(riverGraph.splines).length
+    );
+  }, [addPointToActiveSpline, tributaryWidthPercent, riverGraph]);
+
+  // Handle canvas click (fallback)
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    console.log('🖱️ Canvas click:', { x, y });
-    addPointToActiveSpline(x, y, tributaryWidthPercent);
-    console.log('📊 Graph updated - nodes:', Object.keys(riverGraph.nodes).length, 'splines:', Object.keys(riverGraph.splines).length);
+    handleStageClick(e.clientX - rect.left, e.clientY - rect.top);
   };
+
+  const handleOverlayBackgroundClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    handleStageClick(e.clientX - rect.left, e.clientY - rect.top);
+  }, [handleStageClick]);
 
   // Node interaction handlers
   const handlePointMouseDown = useCallback((pointId: string) => {
@@ -134,13 +155,15 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     const nodeId = makeNodeId(pointId);
     setDraggingPointId(nodeId);
     selectNode(nodeId);
-  }, [selectNode]);
+    setActiveSpline('main');
+  }, [selectNode, setActiveSpline]);
 
   const handlePointClick = useCallback((e: React.MouseEvent, pointId: string) => {
     e.stopPropagation();
     console.log('🖱️ Point click:', pointId);
     selectNode(makeNodeId(pointId));
-  }, [selectNode]);
+    setActiveSpline('main');
+  }, [selectNode, setActiveSpline]);
 
   const handlePointDoubleClick = useCallback((e: React.MouseEvent, pointId: string) => {
     e.stopPropagation();
@@ -203,10 +226,9 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     if (draggingTributaryInfo) {
       const newX = Math.max(0, Math.min(cols * gridSize, x));
       const newY = Math.max(0, Math.min(rows * gridSize, y));
-      // TODO: Move tributary node (need to implement in useRiverGraphV2)
-      console.log('🔄 Dragging tributary node:', draggingTributaryInfo, 'to', { x: newX, y: newY });
+      moveNode(makeNodeId(draggingTributaryInfo.pointId), newX, newY);
     }
-  }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraph, cols, gridSize]);
+  }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraph, cols, rows, gridSize]);
 
   const handleOverlayMouseUp = useCallback(() => {
     if (draggingPointId || draggingTributaryInfo) {
@@ -229,13 +251,15 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     console.log('🖱️ Tributary point mouse down:', { id, pointId, isMouth });
     setDraggingTributaryInfo({ id, pointId, isMouth });
     selectNode(makeNodeId(pointId));
-  }, [selectNode]);
+    setActiveSpline(id as SplineId);
+  }, [selectNode, setActiveSpline]);
 
   const handleTributaryPointClick = useCallback((e: React.MouseEvent, id: string, pointId: string) => {
     e.stopPropagation();
     console.log('🖱️ Tributary point click:', { id, pointId });
     selectNode(makeNodeId(pointId));
-  }, [selectNode]);
+    setActiveSpline(id as SplineId);
+  }, [selectNode, setActiveSpline]);
 
   const handleTributaryPointDoubleClick = useCallback((e: React.MouseEvent, id: string, pointId: string) => {
     e.stopPropagation();
@@ -381,6 +405,9 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
           fontFamily: 'monospace',
           fontSize: '12px',
           lineHeight: '1.6',
+          minHeight: '240px',
+          maxHeight: '260px',
+          overflowY: 'auto',
         }}>
           <strong style={{ color: '#10b981' }}>Graph State:</strong>
           <div style={{ marginLeft: '10px', marginTop: '5px' }}>
@@ -473,7 +500,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
           width={cols * gridSize}
           height={rows * gridSize}
           riverGraph={legacyGraph}
-          activeSplineId="main"
+          activeSplineId={activeSplineId ?? 'main'}
           selectedPointId={selectedNodeId}
           hoveredPointId={hoveredPointId}
           hoveredTributaryId={hoveredTributaryId}
@@ -483,6 +510,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
           onMouseMove={handleOverlayMouseMove}
           onMouseUp={handleOverlayMouseUp}
           onMouseLeave={handleOverlayMouseLeave}
+          onBackgroundClick={handleOverlayBackgroundClick}
           onPointMouseDown={handlePointMouseDown}
           onPointClick={handlePointClick}
           onPointDoubleClick={handlePointDoubleClick}

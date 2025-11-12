@@ -122,31 +122,10 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
 
           // If mouth endpoint: check if can create tributary, else extend downstream
           if (isMouth) {
-            const canAttach = GraphService.canAttachToNode(riverGraph, selectedNodeId);
-            console.log('🔍 Can attach tributary to mouth?', canAttach);
-
-            if (canAttach.valid) {
-              // Create tributary from mouth junction
-              console.log('🌿 Creating tributary from mouth');
-              const result = GraphService.createTributaryFromJunction(
-                riverGraph,
-                mainSpline.id,
-                selectedNodeId,
-                x,
-                y,
-                tributaryWidthPercent
-              );
-              setRiverGraph(result.graph);
-              setActiveSplineId(result.tributaryId);
-              setSelectedNodeId(result.newNodeId);
-              return;
-            }
-
-            // If can't attach, extend downstream (append)
-            console.log('⬇️ Extending downstream from mouth');
+            console.log('🚫 Tributary creation disabled from mouth, extending downstream instead');
             const result = GraphService.extendDownstream(riverGraph, mainSpline.id, x, y);
             setRiverGraph(result.graph);
-            setSelectedNodeId(result.nodeId); // New mouth becomes selected
+            setSelectedNodeId(result.nodeId);
             return;
           }
 
@@ -195,9 +174,87 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
           setSelectedNodeId(result.nodeId);
         }
       } else {
-        // Case 3: Working with secondary spline (tributary or independent)
-        console.log('🌿 Adding to secondary spline');
-        const result = GraphService.addNodeToSpline(riverGraph, activeSplineId, x, y);
+        // Case 3: Working with secondary spline (tributary or independent river)
+        const activeSpline = GraphService.getSpline(riverGraph, activeSplineId);
+        if (!activeSpline) {
+          console.warn('⚠️ Active spline not found:', activeSplineId);
+          return;
+        }
+
+        const isTributary = activeSpline.kind === 'tributary';
+        const selectedIndex = selectedNodeId
+          ? activeSpline.nodeIds.indexOf(selectedNodeId as string)
+          : -1;
+        const isSource = selectedIndex === 0;
+        const isMouth = selectedIndex === activeSpline.nodeIds.length - 1;
+
+        if (isTributary) {
+          console.log('🌿 Editing tributary spline');
+
+          if (isMouth) {
+            console.log('🚫 Cannot add points past junction mouth for tributary');
+            return;
+          }
+
+          if (isSource || selectedIndex === -1) {
+            console.log('⬆️ Extending tributary upstream (away from junction)');
+            const result = GraphService.extendUpstream(riverGraph, activeSplineId, x, y);
+            setRiverGraph(result.graph);
+            setSelectedNodeId(result.nodeId);
+            return;
+          }
+
+          console.log('📌 Inserting point within tributary body');
+          if (!selectedNodeId) {
+            return;
+          }
+
+          const result = GraphService.insertNodeAfter(
+            riverGraph,
+            activeSplineId,
+            selectedNodeId,
+            x,
+            y
+          );
+          setRiverGraph(result.graph);
+          setSelectedNodeId(result.nodeId);
+          return;
+        }
+
+        console.log('🌊 Editing independent river spline');
+
+        if (selectedNodeId && selectedIndex !== -1) {
+          if (isSource) {
+            const result = GraphService.extendUpstream(riverGraph, activeSplineId, x, y);
+            setRiverGraph(result.graph);
+            setSelectedNodeId(result.nodeId);
+            return;
+          }
+
+          if (isMouth) {
+            const result = GraphService.extendDownstream(riverGraph, activeSplineId, x, y);
+            setRiverGraph(result.graph);
+            setSelectedNodeId(result.nodeId);
+            return;
+          }
+
+          try {
+            const result = GraphService.insertNodeAfter(
+              riverGraph,
+              activeSplineId,
+              selectedNodeId,
+              x,
+              y
+            );
+            setRiverGraph(result.graph);
+            setSelectedNodeId(result.nodeId);
+            return;
+          } catch (e) {
+            console.warn('⚠️ Failed to insert node on independent spline:', e);
+          }
+        }
+
+        const result = GraphService.extendDownstream(riverGraph, activeSplineId, x, y);
         setRiverGraph(result.graph);
         setSelectedNodeId(result.nodeId);
       }

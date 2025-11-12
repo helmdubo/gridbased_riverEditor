@@ -8,7 +8,7 @@
  * refactored to work directly with RiverGraphV2 + GeometryCache.
  */
 
-import type { RiverGraphV2 } from '@/core/graph/types';
+import type { RiverGraphV2, Width } from '@/core/graph/types';
 import type { RiverGraph, RiverPoint, Tributary } from '@domain/models/types';
 import { isWidthRelative } from '@/core/graph/types';
 
@@ -53,12 +53,9 @@ export function convertToLegacyFormat(
     console.log('⚠️ No main spline found');
   }
 
-  // Convert tributaries
-  for (const [splineId, spline] of Object.entries(graphV2.splines)) {
-    if (spline.kind !== 'tributary') continue;
-
+  const serializeSplinePoints = (nodeIds: string[]) => {
     const points: RiverPoint[] = [];
-    for (const nodeId of spline.nodeIds) {
+    for (const nodeId of nodeIds) {
       const node = graphV2.nodes[nodeId];
       if (node) {
         points.push({
@@ -68,22 +65,35 @@ export function convertToLegacyFormat(
         });
       }
     }
+    return points;
+  };
 
-    // Get width as percentage
-    let widthPercent = 50; // Default
-    if (isWidthRelative(spline.width)) {
-      widthPercent = spline.width.value; // Now unified as 'value' field
-    } else {
-      // If absolute width in px, convert to rough percentage (assume main river = 60px)
-      widthPercent = (spline.width.value / 60) * 100;
+  const computeWidthPercent = (widthValue: Width, fallbackPx = 60) => {
+    if (isWidthRelative(widthValue)) {
+      return widthValue.value;
     }
+    return (widthValue.value / fallbackPx) * 100;
+  };
+
+  // Convert tributaries and независимые реки
+  for (const [splineId, spline] of Object.entries(graphV2.splines)) {
+    const isMain = mainSpline && splineId === mainSpline.id;
+    if (isMain) continue;
+
+    const points = serializeSplinePoints(spline.nodeIds);
+    if (points.length === 0) continue;
+
+    const widthPercent = computeWidthPercent(spline.width);
+    const isIndependent = spline.kind === 'river';
+    const isDetached = spline.parentId === null;
 
     tributaries.set(splineId, {
       id: splineId,
       parentPointId: spline.parentJunction,
       points,
       widthPercent,
-      isDetached: spline.parentId === null, // Derived from parentId
+      isDetached,
+      isIndependent,
     });
   }
 

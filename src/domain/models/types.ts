@@ -20,6 +20,7 @@ export interface Tributary {
   points: RiverPoint[];
   widthPercent: number;  // Percentage of main river width
   isDetached: boolean;   // Whether tributary is detached from main river
+  isIndependent?: boolean; // True for независимых сплайнов без родителя
 }
 
 /** Complete river graph structure */
