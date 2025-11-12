@@ -20,49 +20,30 @@ export type NodeId = string & { readonly __brand: 'NodeId' };
 export type EdgeId = string & { readonly __brand: 'EdgeId' };
 
 /**
- * Flow direction sign
- * 1 = downstream (mouth to source)
- * -1 = upstream (source to mouth)
+ * Edge kind - distinguishes independent rivers from tributaries
+ * 'river' = independent watercourse (may be main via mainEdgeId or separate)
+ * 'tributary' = child watercourse attached to parent river
  *
- * @ue_equivalent int32 or enum in UE5
- */
-export type FlowSign = 1 | -1;
-
-/**
- * Edge kind - distinguishes main river from tributaries
  * @ue_equivalent UENUM() in C++
  */
-export type EdgeKind = 'main' | 'tributary';
+export type EdgeKind = 'river' | 'tributary';
 
 /**
- * Width mode discriminator
- * @ue_equivalent UENUM() in C++
+ * Width specification - either absolute pixels or relative to parent
+ *
+ * @ue_equivalent
+ * USTRUCT(BlueprintType)
+ * struct FRiverWidth {
+ *   UPROPERTY() ERiverWidthKind Kind; // enum: Px, Relative
+ *   UPROPERTY() float Value;
+ * };
  */
-export type WidthMode = 'absolute' | 'relative';
-
-/**
- * Absolute width in pixels
- * @ue_equivalent float in UE5 (world units)
- */
-export interface WidthAbs {
-  mode: 'absolute';
+export interface Width {
+  /** 'px' = absolute pixels, 'relative' = percentage of parent width */
+  kind: 'px' | 'relative';
+  /** Width value (pixels if 'px', 0-100 if 'relative') */
   value: number;
 }
-
-/**
- * Relative width as percentage of main riverbed width
- * @ue_equivalent float in UE5 (0.0 to 1.0)
- */
-export interface WidthRel {
-  mode: 'relative';
-  percent: number;
-}
-
-/**
- * Width specification - either absolute or relative
- * @ue_equivalent Tagged union (discriminated struct in UE5)
- */
-export type Width = WidthAbs | WidthRel;
 
 /**
  * Graph node representing a point in 2D space
@@ -81,10 +62,19 @@ export interface Node {
 }
 
 /**
- * Graph edge representing a river segment (main river or tributary)
+ * Graph edge representing a river segment (independent river or tributary)
  *
  * An edge is defined by an ordered list of nodes it passes through.
- * The first node is the "mouth" (downstream end), the last is the "source" (upstream end).
+ * The order of nodeIds defines downstream flow: nodeIds[0] = source, nodeIds[last] = mouth.
+ *
+ * Invariants:
+ * - V1: nodeIds order is always downstream (source → mouth)
+ * - V2: kind === 'tributary' ⇔ parentId !== null && parentJunction !== null
+ * - V3: children.length > 0 ⇒ parentId === null (rivers with tributaries cannot be tributaries)
+ * - V4: parentId === null ⇒ parentJunction === null
+ * - V5: parentJunction ∈ parent.nodeIds[1..last] (cannot attach to source, can attach to mouth)
+ * - V6: parentId is unique (one parent only)
+ * - V7: width constraints enforced on attach/detach
  *
  * @ue_equivalent
  * USTRUCT(BlueprintType)
@@ -92,48 +82,46 @@ export interface Node {
  *   UPROPERTY() FGuid Id;
  *   UPROPERTY() ERiverEdgeKind Kind;
  *   UPROPERTY() TArray<FGuid> NodeIds;
+ *   UPROPERTY() FGuid ParentId;           // null for independent rivers
+ *   UPROPERTY() FGuid ParentJunction;     // NodeId where tributary joins parent
  *   UPROPERTY() FRiverWidth Width;
- *   UPROPERTY() int32 FlowSign;
- *   UPROPERTY() FGuid ParentJunction; // NodeId where tributary joins
- *   UPROPERTY() bool bIsDetached;
+ *   UPROPERTY() TArray<FGuid> Children;   // EdgeIds of attached tributaries
  * };
  */
 export interface Edge {
   /** Unique edge identifier */
   id: EdgeId;
 
-  /** Edge type: main river or tributary */
+  /** Edge type: 'river' for independent, 'tributary' for attached child */
   kind: EdgeKind;
 
   /**
-   * Ordered list of node IDs defining the edge path
-   * nodeIds[0] = mouth (downstream), nodeIds[n-1] = source (upstream)
+   * Ordered list of node IDs defining the edge path (downstream direction)
+   * nodeIds[0] = source (upstream), nodeIds[last] = mouth (downstream)
    * Stored as strings for easier serialization and Record key matching
    */
   nodeIds: string[];
 
-  /** Width specification */
+  /**
+   * Parent river EdgeId (null for independent rivers)
+   * When attached as tributary, this points to the parent river edge
+   */
+  parentId: EdgeId | null;
+
+  /**
+   * NodeId where this tributary joins the parent river (null if not attached)
+   * Must be in parent.nodeIds[1..last] (can attach to mouth, not to source)
+   */
+  parentJunction: NodeId | null;
+
+  /** Width specification (absolute px or relative to parent) */
   width: Width;
 
   /**
-   * Flow direction multiplier
-   * 1 = standard downstream flow
-   * -1 = reversed flow (rare, but possible for special cases)
+   * EdgeIds of tributaries attached to this river (empty array for tributaries)
+   * Invariant: children.length > 0 ⇒ parentId === null
    */
-  flowSign: FlowSign;
-
-  /**
-   * For tributaries: NodeId where this edge joins the main river
-   * For main edge: null
-   * Stored as string for easier serialization
-   */
-  parentJunction: string | null;
-
-  /**
-   * Whether this tributary is detached (not yet attached to main river)
-   * Always false for main edge
-   */
-  isDetached: boolean;
+  children: EdgeId[];
 }
 
 /**
@@ -179,17 +167,17 @@ export function isEdgeId(value: unknown): value is EdgeId {
 }
 
 /**
- * Type guard to check if width is absolute
+ * Type guard to check if width is in pixels
  */
-export function isWidthAbs(width: Width): width is WidthAbs {
-  return width.mode === 'absolute';
+export function isWidthPx(width: Width): boolean {
+  return width.kind === 'px';
 }
 
 /**
  * Type guard to check if width is relative
  */
-export function isWidthRel(width: Width): width is WidthRel {
-  return width.mode === 'relative';
+export function isWidthRelative(width: Width): boolean {
+  return width.kind === 'relative';
 }
 
 /**
@@ -209,15 +197,15 @@ export function makeEdgeId(id: string): EdgeId {
 }
 
 /**
- * Helper to create absolute width
+ * Helper to create absolute width in pixels
  */
-export function makeWidthAbs(value: number): WidthAbs {
-  return { mode: 'absolute', value };
+export function makeWidthPx(value: number): Width {
+  return { kind: 'px', value };
 }
 
 /**
- * Helper to create relative width
+ * Helper to create relative width (percentage 0-100)
  */
-export function makeWidthRel(percent: number): WidthRel {
-  return { mode: 'relative', percent };
+export function makeWidthRelative(value: number): Width {
+  return { kind: 'relative', value };
 }
