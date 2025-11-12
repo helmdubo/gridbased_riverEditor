@@ -10,7 +10,7 @@
 
 import type { RiverGraphV2 } from '@/core/graph/types';
 import type { RiverGraph, RiverPoint, Tributary } from '@domain/models/types';
-import { isWidthRel } from '@/core/graph/types';
+import { isWidthRelative } from '@/core/graph/types';
 
 /**
  * Converts RiverGraphV2 to legacy RiverGraph format
@@ -71,10 +71,10 @@ export function convertToLegacyFormat(
 
     // Get width as percentage
     let widthPercent = 50; // Default
-    if (isWidthRel(edge.width)) {
-      widthPercent = edge.width.percent;
+    if (isWidthRelative(edge.width)) {
+      widthPercent = edge.width.value; // Now unified as 'value' field
     } else {
-      // If absolute width, convert to rough percentage (assume main river = 60px)
+      // If absolute width in px, convert to rough percentage (assume main river = 60px)
       widthPercent = (edge.width.value / 60) * 100;
     }
 
@@ -83,7 +83,7 @@ export function convertToLegacyFormat(
       parentPointId: edge.parentJunction,
       points,
       widthPercent,
-      isDetached: edge.isDetached,
+      isDetached: edge.parentId === null, // Derived from parentId
     });
   }
 
