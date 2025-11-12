@@ -1,12 +1,12 @@
 /**
- * Hook for managing river graph state (V2 - Node-Edge architecture)
+ * Hook for managing river graph state (V2 - Node-Spline architecture)
  *
- * This is the new version using RiverGraphV2 with Node-Edge model.
+ * This is the new version using RiverGraphV2 with Node-Spline model.
  * Replaces the old useRiverGraph hook.
  */
 
 import { useState, useCallback } from 'react';
-import type { RiverGraphV2, NodeId, EdgeId } from '@/core/graph/types';
+import type { RiverGraphV2, NodeId, SplineId, Spline } from '@/core/graph/types';
 import { makeWidthPx, makeWidthRelative } from '@/core/graph/types';
 import GraphService from '@services/GraphService';
 
@@ -14,64 +14,107 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
   const [riverGraph, setRiverGraph] = useState<RiverGraphV2>(
     initialGraph || GraphService.createEmpty()
   );
-  const [activeEdgeId, setActiveEdgeId] = useState<EdgeId | 'main' | null>(null);
+  const [activeSplineId, setActiveSplineId] = useState<SplineId | 'main' | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<NodeId | null>(null);
+  const [newSplineSession, setNewSplineSession] = useState<
+    { splineId: SplineId | null; widthPx: number } | null
+  >(null);
 
   /**
-   * Adds a point to the active edge
+   * Adds a point to the active spline
    *
    * Behavior:
    * - If no main river exists: Create first node of main river
-   * - If activeEdgeId is main edge and selectedNodeId exists:
+   * - If activeSplineId is main spline and selectedNodeId exists:
    *   - If selected node is last node: Add to end
    *   - Otherwise: Insert after selected node
-   * - If activeEdgeId is tributary: Add to end
+   * - If activeSplineId is tributary: Add to end
    * - Special: If selectedNodeId is set and is valid junction, create tributary
    */
-  const addPointToActiveEdge = useCallback(
+  const addPointToActiveSpline = useCallback(
     (x: number, y: number, tributaryWidthPercent: number) => {
-      console.log('➕ Adding point to active edge:', { x, y });
+      console.log('➕ Adding point to active spline:', { x, y });
+
+      if (newSplineSession) {
+        if (newSplineSession.splineId === null) {
+          console.log('🆕 Starting new independent spline');
+          const { graph: graphWithNode, nodeId } = GraphService.addNode(riverGraph, x, y);
+          const { graph: graphWithSpline, splineId } = GraphService.createSpline(
+            graphWithNode,
+            'river',
+            [nodeId],
+            makeWidthPx(newSplineSession.widthPx)
+          );
+
+          setRiverGraph(graphWithSpline);
+          setActiveSplineId(splineId);
+          setSelectedNodeId(nodeId);
+          setNewSplineSession({ splineId, widthPx: newSplineSession.widthPx });
+          return;
+        }
+
+        console.log('➕ Extending new spline downstream during creation');
+        const { graph, nodeId } = GraphService.addNodeToSpline(
+          riverGraph,
+          newSplineSession.splineId,
+          x,
+          y
+        );
+        setRiverGraph(graph);
+        setSelectedNodeId(nodeId);
+        setActiveSplineId(newSplineSession.splineId);
+        setNewSplineSession(null);
+        return;
+      }
 
       // Case 1: No main river exists yet - create first node
       if (!GraphService.hasMainRiver(riverGraph)) {
         console.log('🆕 Creating first node and main river');
         const { graph: graphWithNode, nodeId } = GraphService.addNode(riverGraph, x, y);
-        const { graph: finalGraph, edgeId } = GraphService.createMainRiver(
+        const { graph: finalGraph, splineId } = GraphService.createMainRiver(
           graphWithNode,
           [nodeId],
           60 // Default main river width
         );
 
-        console.log('✅ First node created:', { nodeId, edgeId });
+        console.log('✅ First node created:', { nodeId, splineId });
         setRiverGraph(finalGraph);
-        setActiveEdgeId(edgeId);
+        setActiveSplineId(splineId);
         setSelectedNodeId(nodeId);
         return;
       }
 
-      const mainEdge = GraphService.getMainEdge(riverGraph);
-      if (!mainEdge) return;
+      const mainSpline = GraphService.getMainSpline(riverGraph);
+      if (!mainSpline) return;
 
       console.log('🔧 Main river exists, processing...', {
         selectedNodeId,
-        activeEdgeId,
-        mainEdgeNodes: mainEdge.nodeIds.length,
+        activeSplineId,
+        mainEdgeNodes: mainSpline.nodeIds.length,
       });
 
       // Case 2: Working with main river
-      if (activeEdgeId === null || activeEdgeId === 'main' || activeEdgeId === mainEdge.id) {
+      if (activeSplineId === null || activeSplineId === 'main' || activeSplineId === mainSpline.id) {
         if (selectedNodeId) {
           // Check if selected node is an endpoint (source or mouth)
-          const selectedIndex = mainEdge.nodeIds.indexOf(selectedNodeId as string);
+          const selectedIndex = mainSpline.nodeIds.indexOf(selectedNodeId as string);
           const isSource = selectedIndex === 0;
-          const isMouth = selectedIndex === mainEdge.nodeIds.length - 1;
+          const isMouth = selectedIndex === mainSpline.nodeIds.length - 1;
 
           console.log('🔍 Selected node position:', { selectedIndex, isSource, isMouth });
 
           // If source endpoint: extend upstream (prepend)
           if (isSource) {
+            if (mainSpline.nodeIds.length === 1) {
+              console.log('⬇️ Treating single-source as downstream extension for new mouth');
+              const result = GraphService.extendDownstream(riverGraph, mainSpline.id, x, y);
+              setRiverGraph(result.graph);
+              setSelectedNodeId(result.nodeId);
+              return;
+            }
+
             console.log('⬆️ Extending upstream from source');
-            const result = GraphService.extendUpstream(riverGraph, mainEdge.id, x, y);
+            const result = GraphService.extendUpstream(riverGraph, mainSpline.id, x, y);
             setRiverGraph(result.graph);
             setSelectedNodeId(result.nodeId); // New source becomes selected
             return;
@@ -79,31 +122,10 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
 
           // If mouth endpoint: check if can create tributary, else extend downstream
           if (isMouth) {
-            const canAttach = GraphService.canAttachToNode(riverGraph, selectedNodeId);
-            console.log('🔍 Can attach tributary to mouth?', canAttach);
-
-            if (canAttach.valid) {
-              // Create tributary from mouth junction
-              console.log('🌿 Creating tributary from mouth');
-              const result = GraphService.createTributaryFromJunction(
-                riverGraph,
-                mainEdge.id,
-                selectedNodeId,
-                x,
-                y,
-                tributaryWidthPercent
-              );
-              setRiverGraph(result.graph);
-              setActiveEdgeId(result.tributaryId);
-              setSelectedNodeId(result.newNodeId);
-              return;
-            }
-
-            // If can't attach, extend downstream (append)
-            console.log('⬇️ Extending downstream from mouth');
-            const result = GraphService.extendDownstream(riverGraph, mainEdge.id, x, y);
+            console.log('🚫 Tributary creation disabled from mouth, extending downstream instead');
+            const result = GraphService.extendDownstream(riverGraph, mainSpline.id, x, y);
             setRiverGraph(result.graph);
-            setSelectedNodeId(result.nodeId); // New mouth becomes selected
+            setSelectedNodeId(result.nodeId);
             return;
           }
 
@@ -116,14 +138,14 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
             console.log('🌿 Creating tributary from mid-node');
             const result = GraphService.createTributaryFromJunction(
               riverGraph,
-              mainEdge.id,
+              mainSpline.id,
               selectedNodeId,
               x,
               y,
               tributaryWidthPercent
             );
             setRiverGraph(result.graph);
-            setActiveEdgeId(result.tributaryId);
+            setActiveSplineId(result.tributaryId);
             setSelectedNodeId(result.newNodeId);
             return;
           }
@@ -133,7 +155,7 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
             console.log('📌 Inserting node after selected node');
             const result = GraphService.insertNodeAfter(
               riverGraph,
-              mainEdge.id,
+              mainSpline.id,
               selectedNodeId,
               x,
               y
@@ -147,19 +169,95 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
         } else {
           // No selected node - extend downstream (add to mouth end)
           console.log('📍 No selected node, extending downstream');
-          const result = GraphService.extendDownstream(riverGraph, mainEdge.id, x, y);
+          const result = GraphService.extendDownstream(riverGraph, mainSpline.id, x, y);
           setRiverGraph(result.graph);
           setSelectedNodeId(result.nodeId);
         }
       } else {
-        // Case 3: Working with tributary
-        console.log('🌿 Adding to tributary');
-        const result = GraphService.addNodeToEdge(riverGraph, activeEdgeId, x, y);
+        // Case 3: Working with secondary spline (tributary or independent river)
+        const activeSpline = GraphService.getSpline(riverGraph, activeSplineId);
+        if (!activeSpline) {
+          console.warn('⚠️ Active spline not found:', activeSplineId);
+          return;
+        }
+
+        const isTributary = activeSpline.kind === 'tributary';
+        const selectedIndex = selectedNodeId
+          ? activeSpline.nodeIds.indexOf(selectedNodeId as string)
+          : -1;
+        const isSource = selectedIndex === 0;
+        const isMouth = selectedIndex === activeSpline.nodeIds.length - 1;
+
+        if (isTributary) {
+          console.log('🌿 Editing tributary spline');
+
+          if (isSource || selectedIndex === -1) {
+            console.log('⬆️ Extending tributary upstream (away from junction)');
+            const result = GraphService.extendUpstream(riverGraph, activeSplineId, x, y);
+            setRiverGraph(result.graph);
+            setSelectedNodeId(result.nodeId);
+            return;
+          }
+
+          console.log('🚫 Tributaries can only grow from their source');
+          return;
+        }
+
+        console.log('🌊 Editing independent river spline');
+
+        if (selectedNodeId && selectedIndex !== -1) {
+          if (isSource) {
+            const result = GraphService.extendUpstream(riverGraph, activeSplineId, x, y);
+            setRiverGraph(result.graph);
+            setSelectedNodeId(result.nodeId);
+            return;
+          }
+
+          if (isMouth) {
+            const result = GraphService.extendDownstream(riverGraph, activeSplineId, x, y);
+            setRiverGraph(result.graph);
+            setSelectedNodeId(result.nodeId);
+            return;
+          }
+
+          const canAttach = GraphService.canAttachToNode(riverGraph, selectedNodeId);
+          if (canAttach.valid) {
+            const result = GraphService.createTributaryFromJunction(
+              riverGraph,
+              activeSplineId,
+              selectedNodeId,
+              x,
+              y,
+              tributaryWidthPercent
+            );
+            setRiverGraph(result.graph);
+            setActiveSplineId(result.tributaryId);
+            setSelectedNodeId(result.newNodeId);
+            return;
+          }
+
+          try {
+            const result = GraphService.insertNodeAfter(
+              riverGraph,
+              activeSplineId,
+              selectedNodeId,
+              x,
+              y
+            );
+            setRiverGraph(result.graph);
+            setSelectedNodeId(result.nodeId);
+            return;
+          } catch (e) {
+            console.warn('⚠️ Failed to insert node on independent spline:', e);
+          }
+        }
+
+        const result = GraphService.extendDownstream(riverGraph, activeSplineId, x, y);
         setRiverGraph(result.graph);
         setSelectedNodeId(result.nodeId);
       }
     },
-    [riverGraph, activeEdgeId, selectedNodeId]
+    [riverGraph, activeSplineId, selectedNodeId, newSplineSession]
   );
 
   /**
@@ -184,33 +282,51 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
       if (selectedNodeId === nodeId) {
         setSelectedNodeId(null);
       }
+
+      if (activeSplineId === 'main') {
+        const nextMain = GraphService.getMainSpline(newGraph);
+        if (!nextMain) {
+          setActiveSplineId(null);
+        }
+      } else if (activeSplineId) {
+        const stillExists = GraphService.getSpline(newGraph, activeSplineId);
+        if (!stillExists) {
+          const nextMain = GraphService.getMainSpline(newGraph);
+          setActiveSplineId(nextMain ? nextMain.id : null);
+        }
+      }
     },
-    [riverGraph, selectedNodeId]
+    [riverGraph, selectedNodeId, activeSplineId]
   );
 
   /**
-   * Deletes an edge from the graph
+   * Deletes an spline from the graph
    */
-  const deleteEdge = useCallback(
-    (edgeId: EdgeId) => {
-      const newGraph = GraphService.deleteEdge(riverGraph, edgeId);
+  const deleteSpline = useCallback(
+    (splineId: SplineId) => {
+      const newGraph = GraphService.deleteSpline(riverGraph, splineId);
       setRiverGraph(newGraph);
 
-      if (activeEdgeId === edgeId) {
-        const mainEdge = GraphService.getMainEdge(newGraph);
-        setActiveEdgeId(mainEdge?.id || null);
+      if (activeSplineId === splineId) {
+        const mainSpline = GraphService.getMainSpline(newGraph);
+        setActiveSplineId(mainSpline?.id || null);
       }
     },
-    [riverGraph, activeEdgeId]
+    [riverGraph, activeSplineId]
   );
 
   /**
    * Attaches a detached tributary to a junction node
    */
   const attachTributary = useCallback(
-    (tribEdgeId: EdgeId, junctionNodeId: NodeId) => {
+    (tribSplineId: SplineId, parentSplineId: SplineId, junctionNodeId: NodeId) => {
       try {
-        const newGraph = GraphService.attachTributary(riverGraph, tribEdgeId, junctionNodeId);
+        const newGraph = GraphService.attachTributary(
+          riverGraph,
+          tribSplineId,
+          parentSplineId,
+          junctionNodeId
+        );
         setRiverGraph(newGraph);
       } catch (e) {
         console.error('Failed to attach tributary:', e);
@@ -223,7 +339,7 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
    * Detaches a tributary from its junction
    */
   const detachTributary = useCallback(
-    (tribEdgeId: EdgeId) => {
+    (tribEdgeId: SplineId) => {
       const result = GraphService.detachTributary(riverGraph, tribEdgeId, true);
       setRiverGraph(result.graph);
     },
@@ -231,37 +347,46 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
   );
 
   /**
-   * Updates the width of an edge
+   * Begins creation of a new independent spline
    */
-  const updateEdgeWidth = useCallback(
-    (edgeId: EdgeId, widthValue: number, isAbsolute: boolean = false) => {
+  const beginNewSpline = useCallback((widthPixels: number) => {
+    setNewSplineSession({ splineId: null, widthPx: widthPixels });
+    setSelectedNodeId(null);
+    setActiveSplineId(null);
+  }, []);
+
+  /**
+   * Updates the width of an spline
+   */
+  const updateSplineWidth = useCallback(
+    (splineId: SplineId, widthValue: number, isAbsolute: boolean = false) => {
       const width = isAbsolute ? makeWidthPx(widthValue) : makeWidthRelative(widthValue);
-      const newGraph = GraphService.updateEdgeWidth(riverGraph, edgeId, width);
+      const newGraph = GraphService.updateSplineWidth(riverGraph, splineId, width);
       setRiverGraph(newGraph);
     },
     [riverGraph]
   );
 
   /**
-   * Splits an edge at a specific control segment
+   * Splits an spline at a specific control segment
    *
    * This is used when user clicks near the curve to insert a point.
    * The segmentIndex comes from segIndexAt array in the geometry cache.
    */
   const splitEdgeAtSegment = useCallback(
-    (edgeId: EdgeId, segmentIndex: number, x: number, y: number) => {
+    (splineId: SplineId, segmentIndex: number, x: number, y: number) => {
       try {
         // Add new node at the click position
         const { graph: graphWithNode, nodeId } = GraphService.addNode(riverGraph, x, y);
 
-        // Split edge at the segment
-        const newGraph = GraphService.splitEdge(graphWithNode, edgeId, nodeId, segmentIndex);
+        // Split spline at the segment
+        const newGraph = GraphService.splitSpline(graphWithNode, splineId, nodeId, segmentIndex);
 
         setRiverGraph(newGraph);
         setSelectedNodeId(nodeId);
-        setActiveEdgeId(edgeId);
+        setActiveSplineId(splineId);
       } catch (e) {
-        console.error('Failed to split edge:', e);
+        console.error('Failed to split spline:', e);
       }
     },
     [riverGraph]
@@ -273,7 +398,8 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
   const clearAll = useCallback(() => {
     setRiverGraph(GraphService.createEmpty());
     setSelectedNodeId(null);
-    setActiveEdgeId(null);
+    setActiveSplineId(null);
+    setNewSplineSession(null);
   }, []);
 
   /**
@@ -284,36 +410,50 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
   }, []);
 
   /**
-   * Sets the active edge
+   * Sets the active spline
    */
-  const setActiveEdge = useCallback((edgeId: EdgeId | 'main' | null) => {
-    setActiveEdgeId(edgeId);
+  const setActiveSpline = useCallback((splineId: SplineId | 'main' | null) => {
+    setActiveSplineId(splineId);
   }, []);
+
+  const resolveActiveSpline = useCallback((): Spline | null => {
+    if (activeSplineId === 'main') {
+      return GraphService.getMainSpline(riverGraph);
+    }
+
+    if (!activeSplineId) {
+      return null;
+    }
+
+    return GraphService.getSpline(riverGraph, activeSplineId) ?? null;
+  }, [activeSplineId, riverGraph]);
 
   return {
     // State
     riverGraph,
-    activeEdgeId,
+    activeSplineId,
     selectedNodeId,
 
     // Setters
-    setActiveEdge,
+    setActiveSpline,
     selectNode,
 
     // Graph operations
-    addPointToActiveEdge,
+    addPointToActiveSpline,
     moveNode,
     deleteNode,
-    deleteEdge,
+    deleteSpline,
     attachTributary,
     detachTributary,
-    updateEdgeWidth,
+    updateSplineWidth,
     splitEdgeAtSegment,
     clearAll,
+    beginNewSpline,
 
     // Convenience getters
-    mainEdge: GraphService.getMainEdge(riverGraph),
+    mainSpline: GraphService.getMainSpline(riverGraph),
     tributaries: GraphService.getTributaries(riverGraph),
     junctionNodes: GraphService.findJunctionNodes(riverGraph),
+    activeSpline: resolveActiveSpline(),
   };
 };

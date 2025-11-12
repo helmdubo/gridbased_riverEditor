@@ -56,7 +56,7 @@ export const PointMarker: React.FC<PointMarkerProps> = ({
   const strokeWidth = isHovered || isSelected || isSnapTarget ? 3 : 2;
 
   return (
-    <g>
+    <g style={{ pointerEvents: 'auto' }}>
       {/* Hit area */}
       <circle
         cx={point.x}

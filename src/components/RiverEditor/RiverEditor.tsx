@@ -131,7 +131,10 @@ export const RiverEditor: React.FC<RiverEditorProps> = ({
   if (activeSplineId !== 'main') {
     const trib = riverGraph.tributaries.get(activeSplineId);
     if (trib) {
-      currentActiveTribWidth = (trib.widthPercent / 100) * mainRiverbedWidth;
+      currentActiveTribWidth =
+        typeof trib.resolvedWidthPx === 'number'
+          ? trib.resolvedWidthPx
+          : (trib.widthPercent / 100) * mainRiverbedWidth;
     }
   }
 
