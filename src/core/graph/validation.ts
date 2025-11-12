@@ -244,39 +244,32 @@ export function canAttachToNode(
     };
   }
 
-  // Check if node is part of main river
-  if (graph.mainSplineId === null) {
+  // Find an attachable root river that owns this node (kind='river', parentId=null)
+  const owningSplines = Object.values(graph.splines).filter(
+    (spline) => spline.kind === 'river' && spline.parentId === null && spline.nodeIds.includes(nodeId as string)
+  );
+
+  if (owningSplines.length === 0) {
     return {
       valid: false,
-      error: 'Cannot attach tributary: no main river exists',
+      error: 'Cannot attach tributary: node is not part of an independent river',
     };
   }
 
-  const mainSpline = graph.splines[graph.mainSplineId];
-  if (!mainSpline) {
-    return {
-      valid: false,
-      error: 'Cannot attach tributary: main spline not found',
-    };
-  }
+  // Prevent attaching to endpoints of any owning river
+  const attachableSpline =
+    owningSplines.find((spline) => graph.mainSplineId !== null && spline.id === graph.mainSplineId) ||
+    owningSplines[0];
+  const nodeIndex = attachableSpline.nodeIds.indexOf(nodeId as string);
 
-  const nodeIndex = mainSpline.nodeIds.indexOf(nodeId as string);
-  if (nodeIndex === -1) {
-    return {
-      valid: false,
-      error: `Node ${nodeId} is not part of the main river`,
-    };
-  }
-
-  // Cannot attach to source or mouth of main river
-  if (nodeIndex === 0) {
+  if (nodeIndex <= 0) {
     return {
       valid: false,
       error: 'Cannot attach to river source node',
     };
   }
 
-  if (nodeIndex === mainSpline.nodeIds.length - 1) {
+  if (nodeIndex === attachableSpline.nodeIds.length - 1) {
     return {
       valid: false,
       error: 'Cannot attach to river mouth node',

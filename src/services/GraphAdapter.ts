@@ -8,9 +8,37 @@
  * refactored to work directly with RiverGraphV2 + GeometryCache.
  */
 
-import type { RiverGraphV2, Width } from '@/core/graph/types';
+import type { RiverGraphV2, Width, Spline } from '@/core/graph/types';
 import type { RiverGraph, RiverPoint, Tributary } from '@domain/models/types';
 import { isWidthRelative } from '@/core/graph/types';
+import { DEFAULT_MAIN_RIVERBED_WIDTH } from '@domain/constants';
+
+const clampPercent = (value: number) => Math.max(5, Math.min(100, value));
+
+function resolveSplineWidthPx(
+  graph: RiverGraphV2,
+  spline: Spline,
+  visited: Set<string> = new Set()
+): number {
+  if (visited.has(spline.id)) {
+    return DEFAULT_MAIN_RIVERBED_WIDTH;
+  }
+  visited.add(spline.id);
+
+  if (spline.width.kind === 'px') {
+    return spline.width.value;
+  }
+
+  if (spline.parentId) {
+    const parent = graph.splines[spline.parentId];
+    if (parent) {
+      const parentWidth = resolveSplineWidthPx(graph, parent, visited);
+      return (spline.width.value / 100) * parentWidth;
+    }
+  }
+
+  return (spline.width.value / 100) * DEFAULT_MAIN_RIVERBED_WIDTH;
+}
 
 /**
  * Converts RiverGraphV2 to legacy RiverGraph format
@@ -68,11 +96,11 @@ export function convertToLegacyFormat(
     return points;
   };
 
-  const computeWidthPercent = (widthValue: Width, fallbackPx = 60) => {
+  const computeWidthPercent = (widthValue: Width, fallbackPx = DEFAULT_MAIN_RIVERBED_WIDTH) => {
     if (isWidthRelative(widthValue)) {
-      return widthValue.value;
+      return clampPercent(widthValue.value);
     }
-    return (widthValue.value / fallbackPx) * 100;
+    return clampPercent((widthValue.value / fallbackPx) * 100);
   };
 
   // Convert tributaries and независимые реки
@@ -83,9 +111,13 @@ export function convertToLegacyFormat(
     const points = serializeSplinePoints(spline.nodeIds);
     if (points.length === 0) continue;
 
-    const widthPercent = computeWidthPercent(spline.width);
+    const resolvedWidthPx = resolveSplineWidthPx(graphV2, spline);
     const isIndependent = spline.kind === 'river';
-    const isDetached = spline.parentId === null;
+    const widthPercent = computeWidthPercent(
+      spline.width,
+      isIndependent ? DEFAULT_MAIN_RIVERBED_WIDTH : resolvedWidthPx
+    );
+    const isDetached = spline.kind === 'tributary' && spline.parentId === null;
 
     tributaries.set(splineId, {
       id: splineId,
@@ -94,6 +126,9 @@ export function convertToLegacyFormat(
       widthPercent,
       isDetached,
       isIndependent,
+      resolvedWidthPx,
+      parentSplineId: spline.parentId,
+      widthKind: spline.width.kind,
     });
   }
 

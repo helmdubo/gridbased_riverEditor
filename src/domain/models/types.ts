@@ -18,9 +18,12 @@ export interface Tributary {
   id: string;
   parentPointId: string | null;  // null if detached
   points: RiverPoint[];
-  widthPercent: number;  // Percentage of main river width
+  widthPercent: number;  // Percentage relative to parent river (or fallback constant for independent)
   isDetached: boolean;   // Whether tributary is detached from main river
   isIndependent?: boolean; // True for независимых сплайнов без родителя
+  resolvedWidthPx?: number; // Actual width in pixels after inheritance
+  parentSplineId?: string | null; // Parent spline identifier (null for independent)
+  widthKind?: 'px' | 'relative'; // Underlying width specification kind
 }
 
 /** Complete river graph structure */

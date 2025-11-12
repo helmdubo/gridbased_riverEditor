@@ -13,7 +13,7 @@ import type {
 import type { FlowField } from './FlowService';
 import { getCurvePoints } from '@domain/utils/curves';
 import { isJunctionPoint } from '@domain/utils/riverValidation';
-import { MARCHING_SQUARES_CASES, COLORS } from '@domain/constants';
+import { MARCHING_SQUARES_CASES, COLORS, DEFAULT_MAIN_RIVERBED_WIDTH } from '@domain/constants';
 import { distanceToCurve } from '@domain/utils';
 
 export interface RenderOptions {
@@ -84,12 +84,17 @@ export class RenderService {
     }
 
     riverGraph.tributaries.forEach((trib, id) => {
-      const tribWidth = (trib.widthPercent / 100) * mainRiverbedWidth;
+      const widthPx =
+        typeof trib.resolvedWidthPx === 'number'
+          ? trib.resolvedWidthPx
+          : trib.isIndependent
+            ? (trib.widthPercent / 100) * DEFAULT_MAIN_RIVERBED_WIDTH
+            : (trib.widthPercent / 100) * mainRiverbedWidth;
       const tribCurve = getCurvePoints(trib.points);
       if (tribCurve.length > 0) {
         allCurves.push({
           curve: tribCurve,
-          width: tribWidth,
+          width: widthPx,
           id,
           isMain: false,
         });

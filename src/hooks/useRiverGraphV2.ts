@@ -220,6 +220,22 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
             return;
           }
 
+          const canAttach = GraphService.canAttachToNode(riverGraph, selectedNodeId);
+          if (canAttach.valid) {
+            const result = GraphService.createTributaryFromJunction(
+              riverGraph,
+              activeSplineId,
+              selectedNodeId,
+              x,
+              y,
+              tributaryWidthPercent
+            );
+            setRiverGraph(result.graph);
+            setActiveSplineId(result.tributaryId);
+            setSelectedNodeId(result.newNodeId);
+            return;
+          }
+
           try {
             const result = GraphService.insertNodeAfter(
               riverGraph,

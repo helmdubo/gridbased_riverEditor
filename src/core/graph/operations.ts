@@ -401,11 +401,28 @@ export function attachTributary(
   const newNodeIds = [...childSpline.nodeIds];
   newNodeIds[newNodeIds.length - 1] = junctionNodeId as string;
 
-  // V7: Apply width constraint if relative
+  const clampRelative = (value: number) => Math.max(5, Math.min(100, value));
+
+  // V7: Normalize width to relative percent of parent width
   let newWidth = childSpline.width;
-  if (childSpline.width.kind === 'relative' && parentSpline.width.kind === 'px') {
-    const childWidthPx = (childSpline.width.value / 100) * parentSpline.width.value;
-    newWidth = { kind: 'px', value: Math.min(childWidthPx, parentSpline.width.value) };
+  if (parentSpline.width.kind === 'px' && parentSpline.width.value > 0) {
+    if (childSpline.width.kind === 'relative') {
+      newWidth = {
+        kind: 'relative',
+        value: clampRelative(childSpline.width.value),
+      };
+    } else {
+      const percent = (childSpline.width.value / parentSpline.width.value) * 100;
+      newWidth = {
+        kind: 'relative',
+        value: clampRelative(percent),
+      };
+    }
+  } else if (childSpline.width.kind !== 'relative') {
+    newWidth = {
+      kind: 'relative',
+      value: clampRelative(childSpline.width.value),
+    };
   }
 
   // Update child spline
@@ -499,13 +516,25 @@ export function detachTributary(
     };
   }
 
+  // Resolve width to absolute pixels when becoming an independent river
+  let detachedWidth = newGraph.splines[tribSplineId].width;
+  if (detachedWidth.kind === 'relative') {
+    const parentSpline = newGraph.splines[parentSplineId];
+    if (parentSpline && parentSpline.width.kind === 'px') {
+      detachedWidth = {
+        kind: 'px',
+        value: (detachedWidth.value / 100) * parentSpline.width.value,
+      };
+    }
+  }
+
   // Detach tributary: make it independent river
   newGraph.splines[tribSplineId] = {
     ...newGraph.splines[tribSplineId],
     kind: 'river',
     parentId: null,
     parentJunction: null,
-    // V7: width remains as-is (already in px if it was relative)
+    width: detachedWidth,
   };
 
   return {
