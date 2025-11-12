@@ -1,7 +1,7 @@
 /**
  * GraphAdapter - Converts RiverGraphV2 to legacy RiverGraph format
  *
- * This adapter allows the new Node-Edge architecture to work with
+ * This adapter allows the new Node-Spline architecture to work with
  * existing RenderService and FlowService without rewriting them.
  *
  * This is a temporary bridge layer. Eventually, services should be
@@ -15,7 +15,7 @@ import { isWidthRelative } from '@/core/graph/types';
 /**
  * Converts RiverGraphV2 to legacy RiverGraph format
  *
- * @param graphV2 - New Node-Edge graph
+ * @param graphV2 - New Node-Spline graph
  * @returns Legacy RiverGraph format
  */
 export function convertToLegacyFormat(
@@ -26,20 +26,20 @@ export function convertToLegacyFormat(
 
   console.log('🔄 Converting GraphV2:', {
     nodes: Object.keys(graphV2.nodes).length,
-    edges: Object.keys(graphV2.edges).length,
-    mainEdgeId: graphV2.mainEdgeId,
+    splines: Object.keys(graphV2.splines).length,
+    mainSplineId: graphV2.mainSplineId,
   });
 
   // Convert main river
-  const mainEdge = graphV2.mainEdgeId ? graphV2.edges[graphV2.mainEdgeId] : null;
-  if (mainEdge) {
-    console.log('📍 Main edge found:', {
-      id: mainEdge.id,
-      nodeIds: mainEdge.nodeIds.length,
+  const mainSpline = graphV2.mainSplineId ? graphV2.splines[graphV2.mainSplineId] : null;
+  if (mainSpline) {
+    console.log('📍 Main spline found:', {
+      id: mainSpline.id,
+      nodeIds: mainSpline.nodeIds.length,
     });
 
     // Get control points for main river
-    for (const nodeId of mainEdge.nodeIds) {
+    for (const nodeId of mainSpline.nodeIds) {
       const node = graphV2.nodes[nodeId];
       if (node) {
         mainRiver.push({
@@ -50,15 +50,15 @@ export function convertToLegacyFormat(
       }
     }
   } else {
-    console.log('⚠️ No main edge found');
+    console.log('⚠️ No main spline found');
   }
 
   // Convert tributaries
-  for (const [edgeId, edge] of Object.entries(graphV2.edges)) {
-    if (edge.kind !== 'tributary') continue;
+  for (const [splineId, spline] of Object.entries(graphV2.splines)) {
+    if (spline.kind !== 'tributary') continue;
 
     const points: RiverPoint[] = [];
-    for (const nodeId of edge.nodeIds) {
+    for (const nodeId of spline.nodeIds) {
       const node = graphV2.nodes[nodeId];
       if (node) {
         points.push({
@@ -71,19 +71,19 @@ export function convertToLegacyFormat(
 
     // Get width as percentage
     let widthPercent = 50; // Default
-    if (isWidthRelative(edge.width)) {
-      widthPercent = edge.width.value; // Now unified as 'value' field
+    if (isWidthRelative(spline.width)) {
+      widthPercent = spline.width.value; // Now unified as 'value' field
     } else {
       // If absolute width in px, convert to rough percentage (assume main river = 60px)
-      widthPercent = (edge.width.value / 60) * 100;
+      widthPercent = (spline.width.value / 60) * 100;
     }
 
-    tributaries.set(edgeId, {
-      id: edgeId,
-      parentPointId: edge.parentJunction,
+    tributaries.set(splineId, {
+      id: splineId,
+      parentPointId: spline.parentJunction,
       points,
       widthPercent,
-      isDetached: edge.parentId === null, // Derived from parentId
+      isDetached: spline.parentId === null, // Derived from parentId
     });
   }
 
@@ -107,26 +107,26 @@ export function nodeIdToPointId(nodeId: string): string {
 }
 
 /**
- * Gets spline ID from edge ID
- * Main edge → "main", tributary edge → edge ID
+ * Gets spline ID from spline ID
+ * Main spline → "main", tributary spline → spline ID
  */
-export function edgeIdToSplineId(graphV2: RiverGraphV2, edgeId: string): string {
-  if (edgeId === graphV2.mainEdgeId) {
+export function edgeIdToSplineId(graphV2: RiverGraphV2, splineId: string): string {
+  if (splineId === graphV2.mainSplineId) {
     return 'main';
   }
-  return edgeId;
+  return splineId;
 }
 
 /**
- * Gets edge ID from spline ID
- * "main" → main edge ID, otherwise → spline ID
+ * Gets spline ID from spline ID
+ * "main" → main spline ID, otherwise → spline ID
  */
 export function splineIdToEdgeId(graphV2: RiverGraphV2, splineId: string): string | null {
   if (splineId === 'main') {
-    return graphV2.mainEdgeId;
+    return graphV2.mainSplineId;
   }
   // Check if it's a valid tributary
-  if (graphV2.edges[splineId]) {
+  if (graphV2.splines[splineId]) {
     return splineId;
   }
   return null;

@@ -25,6 +25,6 @@ export const App: React.FC = () => {
     );
   }
 
-  // Use V2 Demo with new Node-Edge architecture + P0 bugfixes
+  // Use V2 Demo with new Node-Spline architecture + P0 bugfixes
   return <RiverEditorDemo cols={cols} rows={rows} />;
 };

@@ -1,7 +1,7 @@
 /**
- * Geometry caching for edges
+ * Geometry caching for splines
  *
- * This module provides caching functionality for edge geometry.
+ * This module provides caching functionality for spline geometry.
  * Instead of recomputing curve interpolation and frames on every render,
  * we cache them and only recompute when the graph changes.
  *
@@ -10,14 +10,14 @@
  * @module core/geometry/cache
  */
 
-import type { RiverGraphV2, EdgeId } from '../graph/types';
+import type { RiverGraphV2, SplineId } from '../graph/types';
 import type { Point } from './geometry';
 import type { CurveFrames } from './frames';
 import { getCurvePoints } from './curves';
 import { computeFrames } from './frames';
 
 /**
- * Cached geometry for a single edge
+ * Cached geometry for a single spline
  *
  * Contains all precomputed geometric data needed for rendering and interaction.
  */
@@ -42,17 +42,17 @@ export interface EdgeCache {
 }
 
 /**
- * Complete geometry cache for all edges in the graph
+ * Complete geometry cache for all splines in the graph
  */
 export type GraphCache = Record<string, EdgeCache>;
 
 /**
- * Builds cache for a single edge
+ * Builds cache for a single spline
  *
- * @param controlPoints - Control points defining the edge
+ * @param controlPoints - Control points defining the spline
  * @param controlNodeIds - Node IDs corresponding to control points
  * @param segments - Number of samples per control segment
- * @returns Cached geometry for the edge
+ * @returns Cached geometry for the spline
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
@@ -89,14 +89,14 @@ export function buildEdgeCache(
 }
 
 /**
- * Builds geometry cache for all edges in a graph
+ * Builds geometry cache for all splines in a graph
  *
  * This is the main entry point for cache generation.
  * Call this whenever the graph structure changes (nodes added/moved/deleted).
  *
  * @param graph - River graph
  * @param segments - Number of samples per control segment (optional)
- * @returns Cache mapping EdgeId → EdgeCache
+ * @returns Cache mapping SplineId → EdgeCache
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
@@ -109,72 +109,72 @@ export function buildGraphCache(
 ): GraphCache {
   const cache: GraphCache = {};
 
-  for (const [edgeId, edge] of Object.entries(graph.edges)) {
+  for (const [splineId, spline] of Object.entries(graph.splines)) {
     // Convert node IDs to Point array
-    const controlPoints: Point[] = edge.nodeIds.map((nodeId) => {
+    const controlPoints: Point[] = spline.nodeIds.map((nodeId) => {
       const node = graph.nodes[nodeId];
       if (!node) {
-        console.warn(`Node ${nodeId} not found for edge ${edgeId}`);
+        console.warn(`Node ${nodeId} not found for spline ${splineId}`);
         return { x: 0, y: 0 };
       }
       return { x: node.x, y: node.y };
     });
 
-    // Skip edges with less than 2 points
+    // Skip splines with less than 2 points
     if (controlPoints.length < 2) {
-      console.warn(`Edge ${edgeId} has less than 2 control points, skipping cache`);
+      console.warn(`Spline ${splineId} has less than 2 control points, skipping cache`);
       continue;
     }
 
-    // Build cache for this edge
-    cache[edgeId] = buildEdgeCache(controlPoints, edge.nodeIds, segments);
+    // Build cache for this spline
+    cache[splineId] = buildEdgeCache(controlPoints, spline.nodeIds, segments);
   }
 
   return cache;
 }
 
 /**
- * Gets cached geometry for a specific edge
+ * Gets cached geometry for a specific spline
  *
  * @param cache - Graph cache
- * @param edgeId - Edge ID to lookup
+ * @param splineId - Spline ID to lookup
  * @returns Cached geometry or null if not found
  */
-export function getEdgeCache(cache: GraphCache, edgeId: EdgeId): EdgeCache | null {
-  return cache[edgeId] || null;
+export function getEdgeCache(cache: GraphCache, splineId: SplineId): EdgeCache | null {
+  return cache[splineId] || null;
 }
 
 /**
- * Checks if an edge needs cache rebuild
+ * Checks if an spline needs cache rebuild
  *
- * An edge needs rebuild if:
- * - Cache doesn't exist for this edge
+ * An spline needs rebuild if:
+ * - Cache doesn't exist for this spline
  * - Number of control points changed
  * - Any control point position changed (checked via node IDs)
  *
  * @param cache - Graph cache
- * @param edgeId - Edge ID
+ * @param splineId - Spline ID
  * @param graph - Current graph
  * @returns True if cache needs rebuild
  */
 export function needsCacheRebuild(
   cache: GraphCache,
-  edgeId: EdgeId,
+  splineId: SplineId,
   graph: RiverGraphV2
 ): boolean {
-  const edgeCache = cache[edgeId];
+  const edgeCache = cache[splineId];
   if (!edgeCache) return true;
 
-  const edge = graph.edges[edgeId];
-  if (!edge) return true;
+  const spline = graph.splines[splineId];
+  if (!spline) return true;
 
   // Check if node IDs changed
-  if (edgeCache.controlNodeIds.length !== edge.nodeIds.length) {
+  if (edgeCache.controlNodeIds.length !== spline.nodeIds.length) {
     return true;
   }
 
-  for (let i = 0; i < edge.nodeIds.length; i++) {
-    if (edgeCache.controlNodeIds[i] !== edge.nodeIds[i]) {
+  for (let i = 0; i < spline.nodeIds.length; i++) {
+    if (edgeCache.controlNodeIds[i] !== spline.nodeIds[i]) {
       return true;
     }
   }
@@ -188,16 +188,16 @@ export function needsCacheRebuild(
 }
 
 /**
- * Invalidates (removes) cache entries for specific edges
+ * Invalidates (removes) cache entries for specific splines
  *
  * @param cache - Graph cache
- * @param edgeIds - Edge IDs to invalidate
- * @returns Updated cache with specified edges removed
+ * @param splineIds - Spline IDs to invalidate
+ * @returns Updated cache with specified splines removed
  */
-export function invalidateEdges(cache: GraphCache, edgeIds: EdgeId[]): GraphCache {
+export function invalidateEdges(cache: GraphCache, splineIds: SplineId[]): GraphCache {
   const newCache = { ...cache };
-  for (const edgeId of edgeIds) {
-    delete newCache[edgeId];
+  for (const splineId of splineIds) {
+    delete newCache[splineId];
   }
   return newCache;
 }
