@@ -7,7 +7,7 @@
 
 import { useState, useCallback } from 'react';
 import type { RiverGraphV2, NodeId, EdgeId } from '@/core/graph/types';
-import { makeWidthAbs, makeWidthRel } from '@/core/graph/types';
+import { makeWidthPx, makeWidthRelative } from '@/core/graph/types';
 import GraphService from '@services/GraphService';
 
 export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
@@ -195,7 +195,7 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
    */
   const updateEdgeWidth = useCallback(
     (edgeId: EdgeId, widthValue: number, isAbsolute: boolean = false) => {
-      const width = isAbsolute ? makeWidthAbs(widthValue) : makeWidthRel(widthValue);
+      const width = isAbsolute ? makeWidthPx(widthValue) : makeWidthRelative(widthValue);
       const newGraph = GraphService.updateEdgeWidth(riverGraph, edgeId, width);
       setRiverGraph(newGraph);
     },

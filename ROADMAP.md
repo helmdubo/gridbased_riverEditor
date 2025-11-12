@@ -165,11 +165,22 @@
 - ✅ Все P0 багфиксы внедрены:
   - ✅ FlowSign явный
   - ✅ segIndexAt для snap
-  - ✅ Pointer capture
+  - 🚧 Pointer capture (pending)
   - ✅ devicePixelRatio
 - ✅ Можно добавлять/удалять/перемещать nodes
-- ✅ Можно создавать/присоединять притоки
+- 🚧 Можно создавать/присоединять притоки (pending)
 - ✅ Flow map отображается корректно
+
+**Прогресс восстановления функциональности (2025-01-11):**
+- ✅ Hover highlighting для вершин
+- ✅ Cursor feedback (crosshair/grab/grabbing)
+- ✅ Drag-and-drop для main river nodes
+- ✅ Node deletion (double-click)
+- ✅ Tributary nodes интерактивные
+- 🚧 Tributary creation от junction nodes (pending)
+- 🚧 Tributary attachment/detachment with snapping (pending)
+- 🚧 Insert point preview для mid-segment insertion (pending)
+- 🚧 Spline extension от endpoints (pending)
 
 ---
 

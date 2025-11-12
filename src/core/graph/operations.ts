@@ -22,7 +22,6 @@ import type {
   EdgeId,
   EdgeKind,
   Width,
-  FlowSign,
 } from './types';
 import { makeNodeId, makeEdgeId } from './types';
 import { generateId } from '../geometry/geometry';
@@ -178,28 +177,31 @@ export function moveNode(
 /**
  * Creates a new edge in the graph
  *
+ * Creates an edge connecting the specified nodes. The order of nodeIds defines
+ * the downstream flow: nodeIds[0] = source, nodeIds[last] = mouth.
+ *
  * @param graph - Current graph state
- * @param kind - Edge type (main or tributary)
- * @param nodeIds - Array of node IDs defining the edge path (must be ≥2)
- * @param width - Width specification
- * @param flowSign - Flow direction (default: 1)
+ * @param kind - Edge type ('river' for independent, 'tributary' for attached child)
+ * @param nodeIds - Array of node IDs defining the edge path (must be ≥1)
+ * @param width - Width specification (px or relative)
  * @returns New graph with edge created and the new edge's ID
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
  * static FRiverGraph CreateEdge(const FRiverGraph& Graph, ERiverEdgeKind Kind,
  *                                const TArray<FGuid>& NodeIds, FRiverWidth Width,
- *                                int32 FlowSign, FGuid& OutEdgeId);
+ *                                FGuid& OutEdgeId);
  */
 export function createEdge(
   graph: RiverGraphV2,
   kind: EdgeKind,
   nodeIds: NodeId[],
-  width: Width,
-  flowSign: FlowSign = 1
+  width: Width
 ): CreateEdgeResult {
-  if (nodeIds.length < 2) {
-    throw new Error('Cannot create edge with less than 2 nodes');
+  // Note: Allow edge with 1 node for initial creation (UX convenience)
+  // Curve rendering will require at least 2 nodes, but graph can store 1-node edge
+  if (nodeIds.length < 1) {
+    throw new Error('Cannot create edge with no nodes');
   }
 
   const newGraph = cloneGraph(graph);
@@ -209,16 +211,16 @@ export function createEdge(
     id: edgeId,
     kind,
     nodeIds: nodeIds as string[],
-    width,
-    flowSign,
+    parentId: null,           // Independent river by default
     parentJunction: null,
-    isDetached: kind === 'tributary', // Tributaries start detached
+    width,
+    children: [],             // No children by default
   };
 
   newGraph.edges[edgeId] = edge;
 
-  // If this is the first main edge, set it as mainEdgeId
-  if (kind === 'main' && newGraph.mainEdgeId === null) {
+  // If this is the first 'river' edge and no mainEdgeId set, make it main
+  if (kind === 'river' && newGraph.mainEdgeId === null) {
     newGraph.mainEdgeId = edgeId;
   }
 
@@ -306,69 +308,113 @@ export function deleteEdge(graph: RiverGraphV2, edgeId: EdgeId): RiverGraphV2 {
 }
 
 /**
- * Attaches a detached tributary to a junction node
+ * Attaches an independent river as a tributary to a parent river at a junction node
  *
- * This operation:
- * 1. Sets the tributary's parentJunction to the specified node
- * 2. Sets isDetached = false
- * 3. Makes the first node of the tributary the same as the junction node
+ * This operation (following invariants V2-V7):
+ * 1. Sets tributary's parentId to parent river edge
+ * 2. Sets parentJunction to the junction node
+ * 3. Changes kind to 'tributary'
+ * 4. Makes last node of tributary (mouth) the junction node
+ * 5. Adds tributary to parent's children array
+ * 6. Applies width constraint (V7): min(child.widthPx, parent.widthPx)
  *
  * @param graph - Current graph state
- * @param tribEdgeId - ID of tributary edge to attach
- * @param junctionNodeId - ID of node where tributary should join
+ * @param childEdgeId - ID of edge to attach as tributary
+ * @param parentEdgeId - ID of parent river edge
+ * @param junctionNodeId - ID of node where tributary joins (must be in parent.nodeIds[1..last])
  * @returns New graph with tributary attached
+ *
+ * @throws If child already has tributaries (V3), child already attached (V2),
+ *         junction not in valid position (V5), or edges not found
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
- * static FRiverGraph AttachTributary(const FRiverGraph& Graph, const FGuid& TribEdgeId,
- *                                     const FGuid& JunctionNodeId);
+ * static FRiverGraph AttachTributary(const FRiverGraph& Graph, const FGuid& ChildEdgeId,
+ *                                     const FGuid& ParentEdgeId, const FGuid& JunctionNodeId);
  */
 export function attachTributary(
   graph: RiverGraphV2,
-  tribEdgeId: EdgeId,
+  childEdgeId: EdgeId,
+  parentEdgeId: EdgeId,
   junctionNodeId: NodeId
 ): RiverGraphV2 {
   const newGraph = cloneGraph(graph);
-  const tribEdge = newGraph.edges[tribEdgeId];
+  const childEdge = newGraph.edges[childEdgeId];
+  const parentEdge = newGraph.edges[parentEdgeId];
 
-  if (!tribEdge) {
-    throw new Error(`Tributary edge ${tribEdgeId} not found`);
+  if (!childEdge) {
+    throw new Error(`Child edge ${childEdgeId} not found`);
   }
 
-  if (tribEdge.kind !== 'tributary') {
-    throw new Error(`Edge ${tribEdgeId} is not a tributary`);
+  if (!parentEdge) {
+    throw new Error(`Parent edge ${parentEdgeId} not found`);
+  }
+
+  // V3: Rivers with tributaries cannot be tributaries themselves
+  if (childEdge.children.length > 0) {
+    throw new Error(`Edge ${childEdgeId} has tributaries and cannot be attached as tributary`);
+  }
+
+  // V2: Child cannot already be attached
+  if (childEdge.parentId !== null) {
+    throw new Error(`Edge ${childEdgeId} is already attached to ${childEdge.parentId}`);
   }
 
   if (!newGraph.nodes[junctionNodeId]) {
     throw new Error(`Junction node ${junctionNodeId} not found`);
   }
 
-  // Update tributary to attach to junction
-  const newNodeIds = [...tribEdge.nodeIds];
-  newNodeIds[0] = junctionNodeId as string; // First node (mouth) becomes junction
+  // V5: Junction must be in parent.nodeIds[1..last] (not at index 0 = source)
+  const junctionIndex = parentEdge.nodeIds.indexOf(junctionNodeId as string);
+  if (junctionIndex < 1) {
+    throw new Error(`Junction node must not be at source (index 0) of parent river`);
+  }
 
-  newGraph.edges[tribEdgeId] = {
-    ...tribEdge,
+  // Update child: set mouth (last node) to junction
+  const newNodeIds = [...childEdge.nodeIds];
+  newNodeIds[newNodeIds.length - 1] = junctionNodeId as string;
+
+  // V7: Apply width constraint if relative
+  let newWidth = childEdge.width;
+  if (childEdge.width.kind === 'relative' && parentEdge.width.kind === 'px') {
+    const childWidthPx = (childEdge.width.value / 100) * parentEdge.width.value;
+    newWidth = { kind: 'px', value: Math.min(childWidthPx, parentEdge.width.value) };
+  }
+
+  // Update child edge
+  newGraph.edges[childEdgeId] = {
+    ...childEdge,
+    kind: 'tributary',
     nodeIds: newNodeIds,
+    parentId: parentEdgeId,
     parentJunction: junctionNodeId as string,
-    isDetached: false,
+    width: newWidth,
+  };
+
+  // Update parent: add child to children array
+  newGraph.edges[parentEdgeId] = {
+    ...parentEdge,
+    children: [...parentEdge.children, childEdgeId],
   };
 
   return newGraph;
 }
 
 /**
- * Detaches a tributary from its junction
+ * Detaches a tributary from its parent river, making it an independent river
  *
- * This operation:
- * 1. Sets isDetached = true
- * 2. Sets parentJunction = null
- * 3. Optionally creates a new node at the mouth position
+ * This operation (following invariants V2-V4, V7):
+ * 1. Removes tributary from parent's children array
+ * 2. Sets tributary's parentId = null
+ * 3. Sets parentJunction = null
+ * 4. Changes kind to 'river'
+ * 5. Keeps width as-is (V7: width remains frozen in px)
+ * 6. Optionally creates a new mouth node to separate from junction
  *
  * @param graph - Current graph state
  * @param tribEdgeId - ID of tributary edge to detach
  * @param createNewMouthNode - If true, creates a new node for the mouth (default: false)
- * @returns New graph with tributary detached (and optionally new node ID)
+ * @returns New graph with tributary detached (and optionally new mouth node ID)
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
@@ -391,11 +437,17 @@ export function detachTributary(
     throw new Error(`Edge ${tribEdgeId} is not a tributary`);
   }
 
-  let newMouthNodeId: NodeId = tribEdge.nodeIds[0] as NodeId;
+  const parentEdgeId = tribEdge.parentId;
+  if (!parentEdgeId) {
+    throw new Error(`Tributary ${tribEdgeId} has no parent (already detached?)`);
+  }
+
+  // Get mouth node (last node in tributary)
+  let newMouthNodeId: NodeId = tribEdge.nodeIds[tribEdge.nodeIds.length - 1] as NodeId;
 
   // Optionally create a new mouth node
-  if (createNewMouthNode && tribEdge.nodeIds[0]) {
-    const oldMouthNode = newGraph.nodes[tribEdge.nodeIds[0]];
+  if (createNewMouthNode && newMouthNodeId) {
+    const oldMouthNode = newGraph.nodes[newMouthNodeId];
     if (oldMouthNode) {
       const addResult = addNode(newGraph, oldMouthNode.x, oldMouthNode.y);
       newGraph.nodes = addResult.graph.nodes;
@@ -403,7 +455,7 @@ export function detachTributary(
 
       // Update tributary to use new mouth node
       const newNodeIds = [...tribEdge.nodeIds];
-      newNodeIds[0] = newMouthNodeId as string;
+      newNodeIds[newNodeIds.length - 1] = newMouthNodeId as string;
       newGraph.edges[tribEdgeId] = {
         ...tribEdge,
         nodeIds: newNodeIds,
@@ -411,16 +463,206 @@ export function detachTributary(
     }
   }
 
-  // Detach tributary
+  // Remove tributary from parent's children array
+  const parentEdge = newGraph.edges[parentEdgeId];
+  if (parentEdge) {
+    newGraph.edges[parentEdgeId] = {
+      ...parentEdge,
+      children: parentEdge.children.filter(id => id !== tribEdgeId),
+    };
+  }
+
+  // Detach tributary: make it independent river
   newGraph.edges[tribEdgeId] = {
     ...newGraph.edges[tribEdgeId],
+    kind: 'river',
+    parentId: null,
     parentJunction: null,
-    isDetached: true,
+    // V7: width remains as-is (already in px if it was relative)
   };
 
   return {
     graph: newGraph,
     nodeId: newMouthNodeId,
+  };
+}
+
+/**
+ * Reverses the direction of an edge by reversing its nodeIds array
+ *
+ * This operation (following invariant V1):
+ * - Reverses nodeIds: [source, ..., mouth] becomes [mouth, ..., source]
+ * - New source becomes old mouth, new mouth becomes old source
+ *
+ * Use cases:
+ * - Correcting flow direction when attaching tributary
+ * - Converting "backwards" river to proper downstream flow
+ *
+ * @param graph - Current graph state
+ * @param edgeId - ID of edge to reverse
+ * @returns New graph with edge direction reversed
+ *
+ * @ue_equivalent
+ * UFUNCTION(BlueprintCallable)
+ * static FRiverGraph ReverseEdge(const FRiverGraph& Graph, const FGuid& EdgeId);
+ */
+export function reverseEdge(graph: RiverGraphV2, edgeId: EdgeId): RiverGraphV2 {
+  const newGraph = cloneGraph(graph);
+  const edge = newGraph.edges[edgeId];
+
+  if (!edge) {
+    throw new Error(`Edge ${edgeId} not found`);
+  }
+
+  // Reverse the nodeIds array
+  newGraph.edges[edgeId] = {
+    ...edge,
+    nodeIds: [...edge.nodeIds].reverse(),
+  };
+
+  return newGraph;
+}
+
+/**
+ * Extends an edge upstream by adding a new node at the source end
+ *
+ * @param graph - Current graph state
+ * @param edgeId - ID of edge to extend
+ * @param x - X coordinate of new source node
+ * @param y - Y coordinate of new source node
+ * @returns New graph with edge extended upstream and new node ID
+ *
+ * @ue_equivalent
+ * UFUNCTION(BlueprintCallable)
+ * static FRiverGraph ExtendUpstream(const FRiverGraph& Graph, const FGuid& EdgeId,
+ *                                    float X, float Y, FGuid& OutNewNodeId);
+ */
+export function extendUpstream(
+  graph: RiverGraphV2,
+  edgeId: EdgeId,
+  x: number,
+  y: number
+): AddNodeResult {
+  const newGraph = cloneGraph(graph);
+  const edge = newGraph.edges[edgeId];
+
+  if (!edge) {
+    throw new Error(`Edge ${edgeId} not found`);
+  }
+
+  // Create new node
+  const addResult = addNode(newGraph, x, y);
+  const newNodeId = addResult.nodeId;
+  newGraph.nodes = addResult.graph.nodes;
+
+  // Prepend new node to edge (becomes new source)
+  newGraph.edges[edgeId] = {
+    ...edge,
+    nodeIds: [newNodeId as string, ...edge.nodeIds],
+  };
+
+  return {
+    graph: newGraph,
+    nodeId: newNodeId,
+  };
+}
+
+/**
+ * Extends an edge downstream by adding a new node at the mouth end
+ *
+ * This operation allows extending from mouth even if it's a junction node (V5 case).
+ *
+ * @param graph - Current graph state
+ * @param edgeId - ID of edge to extend
+ * @param x - X coordinate of new mouth node
+ * @param y - Y coordinate of new mouth node
+ * @returns New graph with edge extended downstream and new node ID
+ *
+ * @ue_equivalent
+ * UFUNCTION(BlueprintCallable)
+ * static FRiverGraph ExtendDownstream(const FRiverGraph& Graph, const FGuid& EdgeId,
+ *                                      float X, float Y, FGuid& OutNewNodeId);
+ */
+export function extendDownstream(
+  graph: RiverGraphV2,
+  edgeId: EdgeId,
+  x: number,
+  y: number
+): AddNodeResult {
+  const newGraph = cloneGraph(graph);
+  const edge = newGraph.edges[edgeId];
+
+  if (!edge) {
+    throw new Error(`Edge ${edgeId} not found`);
+  }
+
+  // Create new node
+  const addResult = addNode(newGraph, x, y);
+  const newNodeId = addResult.nodeId;
+  newGraph.nodes = addResult.graph.nodes;
+
+  // Append new node to edge (becomes new mouth)
+  newGraph.edges[edgeId] = {
+    ...edge,
+    nodeIds: [...edge.nodeIds, newNodeId as string],
+  };
+
+  return {
+    graph: newGraph,
+    nodeId: newNodeId,
+  };
+}
+
+/**
+ * Inserts a new node between two existing nodes in an edge
+ *
+ * @param graph - Current graph state
+ * @param edgeId - ID of edge to insert into
+ * @param afterIndex - Index after which to insert (new node goes at afterIndex + 1)
+ * @param x - X coordinate of new node
+ * @param y - Y coordinate of new node
+ * @returns New graph with node inserted and new node ID
+ *
+ * @ue_equivalent
+ * UFUNCTION(BlueprintCallable)
+ * static FRiverGraph InsertBetween(const FRiverGraph& Graph, const FGuid& EdgeId,
+ *                                   int32 AfterIndex, float X, float Y, FGuid& OutNewNodeId);
+ */
+export function insertBetween(
+  graph: RiverGraphV2,
+  edgeId: EdgeId,
+  afterIndex: number,
+  x: number,
+  y: number
+): AddNodeResult {
+  const newGraph = cloneGraph(graph);
+  const edge = newGraph.edges[edgeId];
+
+  if (!edge) {
+    throw new Error(`Edge ${edgeId} not found`);
+  }
+
+  if (afterIndex < 0 || afterIndex >= edge.nodeIds.length) {
+    throw new Error(`Invalid afterIndex ${afterIndex} for edge with ${edge.nodeIds.length} nodes`);
+  }
+
+  // Create new node
+  const addResult = addNode(newGraph, x, y);
+  const newNodeId = addResult.nodeId;
+  newGraph.nodes = addResult.graph.nodes;
+
+  // Insert new node after afterIndex
+  const newNodeIds = [...edge.nodeIds];
+  newNodeIds.splice(afterIndex + 1, 0, newNodeId as string);
+
+  newGraph.edges[edgeId] = {
+    ...edge,
+    nodeIds: newNodeIds,
+  };
+
+  return {
+    graph: newGraph,
+    nodeId: newNodeId,
   };
 }
 
@@ -452,39 +694,6 @@ export function updateEdgeWidth(
   newGraph.edges[edgeId] = {
     ...edge,
     width: { ...width },
-  };
-
-  return newGraph;
-}
-
-/**
- * Updates the flow sign of an edge
- *
- * @param graph - Current graph state
- * @param edgeId - ID of edge to update
- * @param flowSign - New flow direction (1 or -1)
- * @returns New graph with flow sign updated
- *
- * @ue_equivalent
- * UFUNCTION(BlueprintCallable)
- * static FRiverGraph UpdateFlowSign(const FRiverGraph& Graph, const FGuid& EdgeId,
- *                                    int32 NewFlowSign);
- */
-export function updateFlowSign(
-  graph: RiverGraphV2,
-  edgeId: EdgeId,
-  flowSign: FlowSign
-): RiverGraphV2 {
-  const newGraph = cloneGraph(graph);
-  const edge = newGraph.edges[edgeId];
-
-  if (!edge) {
-    throw new Error(`Edge ${edgeId} not found`);
-  }
-
-  newGraph.edges[edgeId] = {
-    ...edge,
-    flowSign,
   };
 
   return newGraph;
