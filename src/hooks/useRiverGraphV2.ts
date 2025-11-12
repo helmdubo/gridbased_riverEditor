@@ -61,29 +61,74 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
       // Case 2: Working with main river
       if (activeEdgeId === null || activeEdgeId === 'main' || activeEdgeId === mainEdge.id) {
         if (selectedNodeId) {
-          // Check if selected node is valid junction for creating tributary
-          const canAttach = GraphService.canAttachToNode(riverGraph, selectedNodeId);
+          // Check if selected node is an endpoint (source or mouth)
+          const selectedIndex = mainEdge.nodeIds.indexOf(selectedNodeId as string);
+          const isSource = selectedIndex === 0;
+          const isMouth = selectedIndex === mainEdge.nodeIds.length - 1;
 
-          console.log('🔍 Can attach tributary?', canAttach);
+          console.log('🔍 Selected node position:', { selectedIndex, isSource, isMouth });
+
+          // If source endpoint: extend upstream (prepend)
+          if (isSource) {
+            console.log('⬆️ Extending upstream from source');
+            const result = GraphService.extendUpstream(riverGraph, mainEdge.id, x, y);
+            setRiverGraph(result.graph);
+            setSelectedNodeId(result.nodeId); // New source becomes selected
+            return;
+          }
+
+          // If mouth endpoint: check if can create tributary, else extend downstream
+          if (isMouth) {
+            const canAttach = GraphService.canAttachToNode(riverGraph, selectedNodeId);
+            console.log('🔍 Can attach tributary to mouth?', canAttach);
+
+            if (canAttach.valid) {
+              // Create tributary from mouth junction
+              console.log('🌿 Creating tributary from mouth');
+              const result = GraphService.createTributaryFromJunction(
+                riverGraph,
+                mainEdge.id,
+                selectedNodeId,
+                x,
+                y,
+                tributaryWidthPercent
+              );
+              setRiverGraph(result.graph);
+              setActiveEdgeId(result.tributaryId);
+              setSelectedNodeId(result.newNodeId);
+              return;
+            }
+
+            // If can't attach, extend downstream (append)
+            console.log('⬇️ Extending downstream from mouth');
+            const result = GraphService.extendDownstream(riverGraph, mainEdge.id, x, y);
+            setRiverGraph(result.graph);
+            setSelectedNodeId(result.nodeId); // New mouth becomes selected
+            return;
+          }
+
+          // Mid-node: check if can create tributary first
+          const canAttach = GraphService.canAttachToNode(riverGraph, selectedNodeId);
+          console.log('🔍 Can attach tributary to mid-node?', canAttach);
 
           if (canAttach.valid) {
             // Create tributary from this junction
-            console.log('🌿 Creating tributary');
+            console.log('🌿 Creating tributary from mid-node');
             const result = GraphService.createTributaryFromJunction(
               riverGraph,
+              mainEdge.id,
               selectedNodeId,
               x,
               y,
               tributaryWidthPercent
             );
-
             setRiverGraph(result.graph);
             setActiveEdgeId(result.tributaryId);
             setSelectedNodeId(result.newNodeId);
             return;
           }
 
-          // Otherwise, insert node after selected node in main edge
+          // Otherwise, insert node after selected node
           try {
             console.log('📌 Inserting node after selected node');
             const result = GraphService.insertNodeAfter(
@@ -93,21 +138,16 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
               x,
               y
             );
-
             console.log('✅ Node inserted:', result.nodeId);
             setRiverGraph(result.graph);
             setSelectedNodeId(result.nodeId);
           } catch (e) {
-            // If insert fails, try adding to end
-            console.log('⚠️ Insert failed, adding to end:', e);
-            const result = GraphService.addNodeToEdge(riverGraph, mainEdge.id, x, y);
-            setRiverGraph(result.graph);
-            setSelectedNodeId(result.nodeId);
+            console.log('⚠️ Insert failed:', e);
           }
         } else {
-          // No selected node - add to end of main river
-          console.log('📍 No selected node, adding to end');
-          const result = GraphService.addNodeToEdge(riverGraph, mainEdge.id, x, y);
+          // No selected node - extend downstream (add to mouth end)
+          console.log('📍 No selected node, extending downstream');
+          const result = GraphService.extendDownstream(riverGraph, mainEdge.id, x, y);
           setRiverGraph(result.graph);
           setSelectedNodeId(result.nodeId);
         }
