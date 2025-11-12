@@ -12,7 +12,7 @@ import { RiverOverlay } from './RiverEditor/RiverOverlay';
 import { DEFAULT_GRID_SIZE, DEFAULT_MAIN_RIVERBED_WIDTH, DEFAULT_RIVER_TYPE } from '@domain/constants';
 import type { RiverType } from '@domain/models/types';
 import GraphService from '@services/GraphService';
-import type { NodeId, SplineId } from '@/core/graph/types';
+import type { NodeId, SplineId, Spline } from '@/core/graph/types';
 import { makeNodeId } from '@/core/graph/types';
 
 interface RiverEditorDemoProps {
@@ -22,11 +22,12 @@ interface RiverEditorDemoProps {
 
 export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) => {
   const gridSize = DEFAULT_GRID_SIZE;
-  const [mainRiverbedWidth, setMainRiverbedWidth] = useState(DEFAULT_MAIN_RIVERBED_WIDTH);
   const [riverType, setRiverType] = useState<RiverType>(DEFAULT_RIVER_TYPE);
   const [showFlowMap, setShowFlowMap] = useState(false);
   const [showFlowArrows, setShowFlowArrows] = useState(false);
-  const [tributaryWidthPercent, setTributaryWidthPercent] = useState(50);
+  const [widthControlMode, setWidthControlMode] = useState<'px' | 'percent'>('px');
+  const [widthControlValue, setWidthControlValue] = useState(DEFAULT_MAIN_RIVERBED_WIDTH);
+  const [newTributaryWidthPercent, setNewTributaryWidthPercent] = useState(50);
 
   // Interaction state
   const [hoveredPointId, setHoveredPointId] = useState<string | null>(null);
@@ -47,13 +48,99 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     beginNewSpline,
     activeSplineId,
     setActiveSpline,
+    updateSplineWidth,
+    activeSpline,
+    mainSpline,
   } = useRiverGraphV2();
+
+  const computeWidthPx = useCallback(
+    (spline: Spline | null | undefined) => {
+      if (!spline) {
+        return DEFAULT_MAIN_RIVERBED_WIDTH;
+      }
+
+      if (spline.width.kind === 'px') {
+        return spline.width.value;
+      }
+
+      if (spline.parentId) {
+        const parent = GraphService.getSpline(riverGraph, spline.parentId);
+        if (parent && parent.width.kind === 'px' && parent.width.value > 0) {
+          return (spline.width.value / 100) * parent.width.value;
+        }
+      }
+
+      return (spline.width.value / 100) * DEFAULT_MAIN_RIVERBED_WIDTH;
+    },
+    [riverGraph]
+  );
+
+  const mainRiverWidthPx = Math.max(5, Math.round(computeWidthPx(mainSpline)));
+  const sliderDisabled = !activeSpline;
 
   // Create new independent river
   const handleCreateNewRiver = () => {
     console.log('🆕 Creating new independent river');
-    beginNewSpline(mainRiverbedWidth);
+    beginNewSpline(mainRiverWidthPx);
   };
+
+  useEffect(() => {
+    if (!activeSpline) {
+      setWidthControlMode('px');
+      setWidthControlValue(mainRiverWidthPx);
+      return;
+    }
+
+    const isTributary = activeSpline.kind === 'tributary' || !!activeSpline.parentId;
+
+    if (isTributary) {
+      let percentValue: number | null = null;
+
+      if (activeSpline.width.kind === 'relative') {
+        percentValue = activeSpline.width.value;
+      } else if (activeSpline.parentId) {
+        const parent = GraphService.getSpline(riverGraph, activeSpline.parentId);
+        if (parent && parent.width.kind === 'px' && parent.width.value > 0) {
+          percentValue = (computeWidthPx(activeSpline) / parent.width.value) * 100;
+        }
+      }
+
+      if (percentValue === null || !Number.isFinite(percentValue)) {
+        percentValue = (computeWidthPx(activeSpline) / mainRiverWidthPx) * 100;
+      }
+
+      const clampedPercent = Math.min(100, Math.max(5, Math.round(percentValue)));
+      setWidthControlMode('percent');
+      setWidthControlValue(clampedPercent);
+      setNewTributaryWidthPercent(clampedPercent);
+      return;
+    }
+
+    const pxValue = Math.max(5, Math.round(computeWidthPx(activeSpline)));
+    setWidthControlMode('px');
+    setWidthControlValue(pxValue);
+  }, [activeSpline, computeWidthPx, mainRiverWidthPx, riverGraph]);
+
+  const handleWidthSliderChange = useCallback(
+    (rawValue: number) => {
+      if (!activeSpline) {
+        return;
+      }
+
+      if (widthControlMode === 'px') {
+        const pxValue = Math.max(5, Math.round(rawValue));
+        setWidthControlValue(pxValue);
+        updateSplineWidth(activeSpline.id, pxValue, true);
+        return;
+      }
+
+      const percentValue = Math.min(100, Math.max(5, Math.round(rawValue)));
+      setWidthControlValue(percentValue);
+      setNewTributaryWidthPercent(percentValue);
+      updateSplineWidth(activeSpline.id, percentValue, false);
+    },
+    [activeSpline, updateSplineWidth, widthControlMode]
+  );
 
   // Get detailed info about selected node and its spline
   const getSelectedNodeInfo = () => {
@@ -87,7 +174,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   // Renderer with geometry cache + P0 bugfixes
   const { canvasRef, legacyGraph, render } = useRiverRendererV2(
     riverGraph,
-    mainRiverbedWidth,
+    mainRiverWidthPx,
     cols,
     rows,
     gridSize,
@@ -112,7 +199,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       splineSnapInfo: null,
       hoveredSegment: null,
       insertPointPreview: null,
-      mainRiverbedWidth,
+      mainRiverbedWidth: mainRiverWidthPx,
     }, riverType);
   }, [
     riverGraph,
@@ -120,20 +207,20 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     showFlowMap,
     showFlowArrows,
     riverType,
-    mainRiverbedWidth,
+    mainRiverWidthPx,
     activeSplineId,
   ]);
 
   const handleStageClick = useCallback((x: number, y: number) => {
     console.log('🖱️ Stage click:', { x, y });
-    addPointToActiveSpline(x, y, tributaryWidthPercent);
+    addPointToActiveSpline(x, y, newTributaryWidthPercent);
     console.log(
       '📊 Graph updated - nodes:',
       Object.keys(riverGraph.nodes).length,
       'splines:',
       Object.keys(riverGraph.splines).length
     );
-  }, [addPointToActiveSpline, tributaryWidthPercent, riverGraph]);
+  }, [addPointToActiveSpline, newTributaryWidthPercent, riverGraph]);
 
   // Handle canvas click (fallback)
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -264,9 +351,8 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   const handleTributaryPointDoubleClick = useCallback((e: React.MouseEvent, id: string, pointId: string) => {
     e.stopPropagation();
     console.log('🗑️ Delete tributary node:', { id, pointId });
-    // TODO: Implement deleteTributaryNode in useRiverGraphV2
-    // deleteTributaryNode(id, pointId);
-  }, []);
+    deleteNode(makeNodeId(pointId));
+  }, [deleteNode]);
 
   return (
     <div style={{
@@ -297,28 +383,24 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
         backgroundColor: '#2a2a2a',
         borderRadius: '8px',
       }}>
-        <label>
-          Main Width: {mainRiverbedWidth}px
+        <label style={{ flex: '0 0 auto' }}>
+          Active Width: {widthControlValue}
+          {widthControlMode === 'px' ? 'px' : '%'}
           <input
             type="range"
-            min="20"
-            max="150"
-            value={mainRiverbedWidth}
-            onChange={(e) => setMainRiverbedWidth(Number(e.target.value))}
-            style={{ display: 'block', width: '200px' }}
+            min={widthControlMode === 'px' ? 20 : 5}
+            max={widthControlMode === 'px' ? 180 : 100}
+            step={1}
+            value={widthControlValue}
+            onChange={(e) => handleWidthSliderChange(Number(e.target.value))}
+            disabled={sliderDisabled}
+            style={{ display: 'block', width: '220px', opacity: sliderDisabled ? 0.5 : 1 }}
           />
-        </label>
-
-        <label>
-          Tributary Width: {tributaryWidthPercent}%
-          <input
-            type="range"
-            min="20"
-            max="100"
-            value={tributaryWidthPercent}
-            onChange={(e) => setTributaryWidthPercent(Number(e.target.value))}
-            style={{ display: 'block', width: '200px' }}
-          />
+          {!activeSpline && (
+            <span style={{ display: 'block', marginTop: '4px', color: '#888', fontSize: '11px' }}>
+              Select a river or tributary node to adjust its width
+            </span>
+          )}
         </label>
 
         <label>

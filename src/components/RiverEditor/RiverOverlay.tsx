@@ -99,7 +99,7 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
       {Array.from(riverGraph.tributaries.values()).map((trib) =>
         trib.points.map((p, idx) => {
           const isIndependent = !!trib.isIndependent;
-          const isMouth = idx === 0;
+          const isMouth = idx === trib.points.length - 1;
           const hideAttachedMouth = isMouth && !trib.isDetached && !isIndependent;
           if (hideAttachedMouth) return null;
 
@@ -108,6 +108,7 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
               key={`${trib.id}-${p.id}`}
               point={p}
               isHovered={hoveredTributaryId === trib.id && hoveredTributaryPointId === p.id}
+              isSelected={selectedPointId === p.id}
               isActive={activeSplineId === trib.id}
               isJunction={false}
               isDetached={trib.isDetached && !isIndependent}
