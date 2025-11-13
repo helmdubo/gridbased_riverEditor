@@ -22,10 +22,41 @@ import type {
   SplineId,
   SplineKind,
   Width,
+  RiverAttributes,
 } from './types';
 import { makeNodeId, makeSplineId } from './types';
 import { computeNodeKind } from './nodeKinds';
 import { generateId } from '../geometry/geometry';
+
+function cloneAttributes(attributes: RiverAttributes): RiverAttributes {
+  return {
+    ...attributes,
+    width: { ...attributes.width },
+  };
+}
+
+function applyAttributesToSpline(spline: Spline, attributes: RiverAttributes): Spline {
+  const cloned = cloneAttributes(attributes);
+  return {
+    ...spline,
+    attributes: cloned,
+    width: { ...cloned.width },
+  };
+}
+
+function syncRootMetadata(graph: RiverGraphV2): void {
+  const uniqueRoots = Array.from(new Set(graph.rootSplineIds));
+  graph.rootSplineIds = uniqueRoots;
+
+  if (uniqueRoots.length === 0) {
+    graph.mainSplineId = null;
+    return;
+  }
+
+  if (!graph.mainSplineId || !uniqueRoots.includes(graph.mainSplineId)) {
+    graph.mainSplineId = uniqueRoots[0];
+  }
+}
 
 /**
  * Result of an operation that creates a new node
@@ -50,16 +81,21 @@ function cloneGraph(graph: RiverGraphV2): RiverGraphV2 {
   return {
     nodes: { ...graph.nodes },
     splines: Object.fromEntries(
-      Object.entries(graph.splines).map(([id, spline]) => [
-        id,
-        {
-          ...spline,
-          nodeIds: [...spline.nodeIds],
-          width: { ...spline.width },
-        },
-      ])
+      Object.entries(graph.splines).map(([id, spline]) => {
+        const clonedSpline = applyAttributesToSpline(
+          {
+            ...spline,
+            nodeIds: [...spline.nodeIds],
+            children: [...spline.children],
+          },
+          spline.attributes
+        );
+
+        return [id, clonedSpline];
+      })
     ),
-    mainSplineId: graph.mainSplineId,
+    rootSplineIds: [...graph.rootSplineIds],
+    mainSplineId: graph.mainSplineId ?? null,
   };
 }
 
@@ -157,23 +193,45 @@ export function deleteNode(graph: RiverGraphV2, nodeId: NodeId): RiverGraphV2 {
     if (spline.kind === 'tributary' && spline.parentJunction === nodeId && spline.parentId) {
       // Junction removed: detach tributary and let it become independent
       detachments.push({ parentId: spline.parentId, childId: splineId as SplineId });
-      updatedSpline = {
-        ...updatedSpline,
-        kind: 'river',
-        parentId: null,
-        parentJunction: null,
-      };
+
+      let detachedWidth = spline.attributes.width;
+      if (detachedWidth.kind === 'relative') {
+        const parentSpline = newGraph.splines[spline.parentId];
+        if (parentSpline && parentSpline.attributes.width.kind === 'px') {
+          detachedWidth = {
+            kind: 'px',
+            value:
+              (detachedWidth.value / 100) * parentSpline.attributes.width.value,
+          };
+        }
+      }
+
+      updatedSpline = applyAttributesToSpline(
+        {
+          ...updatedSpline,
+          kind: 'river',
+          parentId: null,
+          parentJunction: null,
+          isIndependent: true,
+          isDetached: true,
+        },
+        {
+          ...spline.attributes,
+          width: detachedWidth,
+        }
+      );
     }
 
     newGraph.splines[splineId] = updatedSpline;
+    if (updatedSpline.parentId === null && !newGraph.rootSplineIds.includes(splineId as SplineId)) {
+      newGraph.rootSplineIds = [...newGraph.rootSplineIds, splineId as SplineId];
+    }
   }
 
   // Delete invalid splines
   for (const splineId of splinesToDelete) {
     delete newGraph.splines[splineId];
-    if (newGraph.mainSplineId === splineId) {
-      newGraph.mainSplineId = null;
-    }
+    newGraph.rootSplineIds = newGraph.rootSplineIds.filter((id) => id !== splineId);
   }
 
   // Remove detached tributaries from their former parents
@@ -187,6 +245,8 @@ export function deleteNode(graph: RiverGraphV2, nodeId: NodeId): RiverGraphV2 {
   }
 
   refreshAllNodeKinds(newGraph);
+
+  syncRootMetadata(newGraph);
 
   return newGraph;
 }
@@ -245,7 +305,7 @@ export function createSpline(
   graph: RiverGraphV2,
   kind: SplineKind,
   nodeIds: NodeId[],
-  width: Width
+  attributes: RiverAttributes
 ): CreateSplineResult {
   // Note: Allow spline with 1 node for initial creation (UX convenience)
   // Curve rendering will require at least 2 nodes, but graph can store 1-node spline
@@ -256,24 +316,33 @@ export function createSpline(
   const newGraph = cloneGraph(graph);
   const splineId = makeSplineId(generateId());
 
-  const spline: Spline = {
-    id: splineId,
-    kind,
-    nodeIds: nodeIds as string[],
-    parentId: null,           // Independent river by default
-    parentJunction: null,
-    width,
-    children: [],             // No children by default
-  };
+  const spline = applyAttributesToSpline(
+    {
+      id: splineId,
+      kind,
+      flowSign: 1,
+      nodeIds: nodeIds as string[],
+      parentId: null,
+      parentJunction: null,
+      attributes: cloneAttributes(attributes),
+      width: { ...attributes.width },
+      isIndependent: kind === 'river',
+      isDetached: kind === 'tributary',
+      isMain: false,
+      children: [],
+    },
+    attributes
+  );
 
   newGraph.splines[splineId] = spline;
 
-  // If this is the first 'river' spline and no mainSplineId set, make it main
-  if (kind === 'river' && newGraph.mainSplineId === null) {
-    newGraph.mainSplineId = splineId;
+  if (spline.parentId === null) {
+    newGraph.rootSplineIds = [...newGraph.rootSplineIds, splineId];
   }
 
   refreshAllNodeKinds(newGraph);
+
+  syncRootMetadata(newGraph);
 
   return {
     graph: newGraph,
@@ -330,6 +399,8 @@ export function splitSpline(
 
   refreshAllNodeKinds(newGraph);
 
+  syncRootMetadata(newGraph);
+
   return newGraph;
 }
 
@@ -352,10 +423,11 @@ export function deleteSpline(graph: RiverGraphV2, splineId: SplineId): RiverGrap
 
   delete newGraph.splines[splineId];
 
-  // If we deleted the main spline, clear mainSplineId
-  if (newGraph.mainSplineId === splineId) {
-    newGraph.mainSplineId = null;
-  }
+  newGraph.rootSplineIds = newGraph.rootSplineIds.filter((id) => id !== splineId);
+
+  refreshAllNodeKinds(newGraph);
+
+  syncRootMetadata(newGraph);
 
   refreshAllNodeKinds(newGraph);
 
@@ -432,36 +504,46 @@ export function attachTributary(
   const clampRelative = (value: number) => Math.max(5, Math.min(100, value));
 
   // V7: Normalize width to relative percent of parent width
-  let newWidth = childSpline.width;
-  if (parentSpline.width.kind === 'px' && parentSpline.width.value > 0) {
-    if (childSpline.width.kind === 'relative') {
+  let newWidth = childSpline.attributes.width;
+  if (parentSpline.attributes.width.kind === 'px' && parentSpline.attributes.width.value > 0) {
+    if (childSpline.attributes.width.kind === 'relative') {
       newWidth = {
         kind: 'relative',
-        value: clampRelative(childSpline.width.value),
+        value: clampRelative(childSpline.attributes.width.value),
       };
     } else {
-      const percent = (childSpline.width.value / parentSpline.width.value) * 100;
+      const percent =
+        (childSpline.attributes.width.value / parentSpline.attributes.width.value) * 100;
       newWidth = {
         kind: 'relative',
         value: clampRelative(percent),
       };
     }
-  } else if (childSpline.width.kind !== 'relative') {
+  } else if (childSpline.attributes.width.kind !== 'relative') {
     newWidth = {
       kind: 'relative',
-      value: clampRelative(childSpline.width.value),
+      value: clampRelative(childSpline.attributes.width.value),
     };
   }
 
   // Update child spline
-  newGraph.splines[childSplineId] = {
-    ...childSpline,
-    kind: 'tributary',
-    nodeIds: newNodeIds,
-    parentId: parentSplineId,
-    parentJunction: junctionNodeId,
-    width: newWidth,
-  };
+  newGraph.splines[childSplineId] = applyAttributesToSpline(
+    {
+      ...childSpline,
+      kind: 'tributary',
+      nodeIds: newNodeIds,
+      parentId: parentSplineId,
+      parentJunction: junctionNodeId,
+      isIndependent: false,
+      isDetached: false,
+    },
+    {
+      ...childSpline.attributes,
+      width: newWidth,
+    }
+  );
+
+  newGraph.rootSplineIds = newGraph.rootSplineIds.filter((id) => id !== childSplineId);
 
   // Update parent: add child to children array
   newGraph.splines[parentSplineId] = {
@@ -470,6 +552,8 @@ export function attachTributary(
   };
 
   refreshAllNodeKinds(newGraph);
+
+  syncRootMetadata(newGraph);
 
   return newGraph;
 }
@@ -547,25 +631,41 @@ export function detachTributary(
   }
 
   // Resolve width to absolute pixels when becoming an independent river
-  let detachedWidth = newGraph.splines[tribSplineId].width;
+  let detachedWidth = newGraph.splines[tribSplineId].attributes.width;
   if (detachedWidth.kind === 'relative') {
     const parentSpline = newGraph.splines[parentSplineId];
-    if (parentSpline && parentSpline.width.kind === 'px') {
+    if (parentSpline && parentSpline.attributes.width.kind === 'px') {
       detachedWidth = {
         kind: 'px',
-        value: (detachedWidth.value / 100) * parentSpline.width.value,
+        value:
+          (detachedWidth.value / 100) * parentSpline.attributes.width.value,
       };
     }
   }
 
   // Detach tributary: make it independent river
-  newGraph.splines[tribSplineId] = {
-    ...newGraph.splines[tribSplineId],
-    kind: 'river',
-    parentId: null,
-    parentJunction: null,
-    width: detachedWidth,
-  };
+  newGraph.splines[tribSplineId] = applyAttributesToSpline(
+    {
+      ...newGraph.splines[tribSplineId],
+      kind: 'river',
+      parentId: null,
+      parentJunction: null,
+      isIndependent: true,
+      isDetached: true,
+    },
+    {
+      ...newGraph.splines[tribSplineId].attributes,
+      width: detachedWidth,
+    }
+  );
+
+  if (!newGraph.rootSplineIds.includes(tribSplineId)) {
+    newGraph.rootSplineIds = [...newGraph.rootSplineIds, tribSplineId];
+  }
+
+  refreshAllNodeKinds(newGraph);
+
+  syncRootMetadata(newGraph);
 
   refreshAllNodeKinds(newGraph);
 
@@ -606,6 +706,7 @@ export function reverseSpline(graph: RiverGraphV2, splineId: SplineId): RiverGra
   newGraph.splines[splineId] = {
     ...spline,
     nodeIds: [...spline.nodeIds].reverse(),
+    flowSign: (spline.flowSign === 1 ? -1 : 1),
   };
 
   refreshAllNodeKinds(newGraph);
@@ -787,10 +888,49 @@ export function updateSplineWidth(
     throw new Error(`Spline ${splineId} not found`);
   }
 
+  newGraph.splines[splineId] = applyAttributesToSpline(
+    spline,
+    {
+      ...spline.attributes,
+      width: { ...width },
+    }
+  );
+
+  syncRootMetadata(newGraph);
+
+  return newGraph;
+}
+
+/**
+ * Toggles the main flag on a spline (UI highlighting helper)
+ */
+export function setSplineMainState(
+  graph: RiverGraphV2,
+  splineId: SplineId,
+  isMain: boolean
+): RiverGraphV2 {
+  const newGraph = cloneGraph(graph);
+  const spline = newGraph.splines[splineId];
+
+  if (!spline) {
+    throw new Error(`Spline ${splineId} not found`);
+  }
+
   newGraph.splines[splineId] = {
     ...spline,
-    width: { ...width },
+    isMain,
   };
+
+  if (isMain) {
+    if (!newGraph.rootSplineIds.includes(splineId)) {
+      newGraph.rootSplineIds = [...newGraph.rootSplineIds, splineId];
+    }
+    newGraph.mainSplineId = splineId;
+  } else if (newGraph.mainSplineId === splineId) {
+    newGraph.mainSplineId = null;
+  }
+
+  syncRootMetadata(newGraph);
 
   return newGraph;
 }
@@ -887,6 +1027,8 @@ export function mergeNodes(
 
   refreshAllNodeKinds(newGraph);
 
+  syncRootMetadata(newGraph);
+
   return newGraph;
 }
 
@@ -968,14 +1110,46 @@ export function attachSplineAsTributary(
   // Replace the attach point (mouth) with target junction node
   tributaryNodeIds[tributaryNodeIds.length - 1] = targetNodeId as string;
 
+  const clampRelative = (value: number) => Math.max(5, Math.min(100, value));
+  let newWidth = draggedSpline.attributes.width;
+  if (targetSpline.attributes.width.kind === 'px' && targetSpline.attributes.width.value > 0) {
+    if (newWidth.kind === 'relative') {
+      newWidth = {
+        kind: 'relative',
+        value: clampRelative(newWidth.value),
+      };
+    } else {
+      const percent = (newWidth.value / targetSpline.attributes.width.value) * 100;
+      newWidth = {
+        kind: 'relative',
+        value: clampRelative(percent),
+      };
+    }
+  } else if (newWidth.kind !== 'relative') {
+    newWidth = {
+      kind: 'relative',
+      value: clampRelative(newWidth.value),
+    };
+  }
+
   // Update dragged spline to be tributary
-  newGraph.splines[draggedSplineId] = {
-    ...draggedSpline,
-    kind: 'tributary',
-    parentId: targetSplineId,
-    parentJunction: targetNodeId,
-    nodeIds: tributaryNodeIds,
-  };
+  newGraph.splines[draggedSplineId] = applyAttributesToSpline(
+    {
+      ...draggedSpline,
+      kind: 'tributary',
+      parentId: targetSplineId,
+      parentJunction: targetNodeId,
+      nodeIds: tributaryNodeIds,
+      isIndependent: false,
+      isDetached: false,
+    },
+    {
+      ...draggedSpline.attributes,
+      width: newWidth,
+    }
+  );
+
+  newGraph.rootSplineIds = newGraph.rootSplineIds.filter((id) => id !== draggedSplineId);
 
   // Add tributary to parent's children
   if (!targetSpline.children.includes(draggedSplineId)) {
@@ -989,6 +1163,8 @@ export function attachSplineAsTributary(
   delete newGraph.nodes[draggedNodeId];
 
   refreshAllNodeKinds(newGraph);
+
+  syncRootMetadata(newGraph);
 
   return newGraph;
 }
@@ -1105,6 +1281,8 @@ export function mergeSplines(
         newGraph.splines[childId] = {
           ...childSpline,
           parentId: survivorSplineId,
+          isIndependent: false,
+          isDetached: false,
         };
       }
     }
@@ -1123,12 +1301,17 @@ export function mergeSplines(
   // Delete absorbed spline
   delete newGraph.splines[absorbedSplineId];
 
-  // Update mainSplineId if absorbed spline was main
-  if (newGraph.mainSplineId === absorbedSplineId) {
-    newGraph.mainSplineId = survivorSplineId;
+  const updatedSurvivor = newGraph.splines[survivorSplineId];
+  newGraph.rootSplineIds = newGraph.rootSplineIds.filter(
+    (id) => id !== absorbedSplineId && id !== survivorSplineId
+  );
+  if (updatedSurvivor.parentId === null) {
+    newGraph.rootSplineIds = [...newGraph.rootSplineIds, survivorSplineId];
   }
 
   refreshAllNodeKinds(newGraph);
+
+  syncRootMetadata(newGraph);
 
   return newGraph;
 }
@@ -1144,6 +1327,7 @@ export function createEmptyGraph(): RiverGraphV2 {
   return {
     nodes: {},
     splines: {},
+    rootSplineIds: [],
     mainSplineId: null,
   };
 }

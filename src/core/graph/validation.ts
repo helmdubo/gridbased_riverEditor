@@ -63,8 +63,8 @@ export function validateSpline(graph: RiverGraphV2, spline: Spline): ValidationR
  *
  * Checks:
  * - All splines are valid (via validateSpline)
- * - Main spline exists if mainSplineId is set
- * - Main spline has kind='main'
+ * - Root spline index (rootSplineIds) references only detached/independent splines
+ * - Root index stays in sync with spline.parentId === null
  * - No orphaned nodes (nodes not referenced by any spline)
  * - Tributary parent junctions exist and are valid
  * - Detached tributaries have parentJunction=null
@@ -74,26 +74,45 @@ export function validateSpline(graph: RiverGraphV2, spline: Spline): ValidationR
  * static bool IsValidGraph(const FRiverGraph& Graph, FString& OutError);
  */
 export function isValidGraph(graph: RiverGraphV2): ValidationResult {
-  if (graph.mainSplineId !== null) {
+  const rootSet = new Set(graph.rootSplineIds.map((id) => id as string));
+
+  if (graph.mainSplineId) {
     const mainSpline = graph.splines[graph.mainSplineId];
     if (!mainSpline) {
       return {
         valid: false,
-        error: `Main spline ${graph.mainSplineId} does not exist`,
+        error: `Main spline reference ${graph.mainSplineId} is missing`,
       };
     }
 
-    if (mainSpline.kind !== 'river') {
+    if (mainSpline.parentId !== null) {
       return {
         valid: false,
-        error: `Main spline ${graph.mainSplineId} must be of kind 'river'`,
+        error: `Main spline ${mainSpline.id} must remain a root river`,
       };
     }
 
-    if (mainSpline.parentId !== null || mainSpline.parentJunction !== null) {
+    if (!rootSet.has(mainSpline.id)) {
       return {
         valid: false,
-        error: `Main spline ${graph.mainSplineId} cannot have a parent`,
+        error: `Main spline ${mainSpline.id} must be listed in rootSplineIds`,
+      };
+    }
+  }
+
+  for (const rootId of graph.rootSplineIds) {
+    const spline = graph.splines[rootId];
+    if (!spline) {
+      return {
+        valid: false,
+        error: `Root spline reference ${rootId} is missing`,
+      };
+    }
+
+    if (spline.parentId !== null) {
+      return {
+        valid: false,
+        error: `Root spline ${rootId} must not have a parent`,
       };
     }
   }
@@ -104,27 +123,85 @@ export function isValidGraph(graph: RiverGraphV2): ValidationResult {
       return validation;
     }
 
+    if (spline.parentId === null && !rootSet.has(spline.id)) {
+      return {
+        valid: false,
+        error: `Spline ${spline.id} has no parent but is missing from rootSplineIds`,
+      };
+    }
+
+    if (spline.parentId !== null && rootSet.has(spline.id)) {
+      return {
+        valid: false,
+        error: `Spline ${spline.id} cannot be in rootSplineIds while attached`,
+      };
+    }
+
+    if (spline.isIndependent && (spline.kind !== 'river' || spline.parentId !== null)) {
+      return {
+        valid: false,
+        error: `Spline ${spline.id} marked independent but is not a root river`,
+      };
+    }
+
+    if (!spline.isIndependent && spline.kind === 'river' && spline.parentId === null && !spline.isDetached) {
+      return {
+        valid: false,
+        error: `River ${spline.id} without parent should be marked independent`,
+      };
+    }
+
+    if (spline.isDetached && spline.parentId !== null) {
+      return {
+        valid: false,
+        error: `Spline ${spline.id} cannot be detached while having a parent`,
+      };
+    }
+
     if (spline.kind === 'tributary') {
-      if (spline.parentId === null || spline.parentJunction === null) {
-        return {
-          valid: false,
-          error: `Tributary ${spline.id} must have parentId and parentJunction`,
-        };
-      }
+      if (spline.parentId === null) {
+        if (!spline.isDetached) {
+          return {
+            valid: false,
+            error: `Detached tributary ${spline.id} must have isDetached=true`,
+          };
+        }
 
-      const parentSpline = graph.splines[spline.parentId];
-      if (!parentSpline) {
-        return {
-          valid: false,
-          error: `Tributary ${spline.id} references non-existent parent ${spline.parentId}`,
-        };
-      }
+        if (spline.parentJunction !== null) {
+          return {
+            valid: false,
+            error: `Detached tributary ${spline.id} must clear parentJunction`,
+          };
+        }
+      } else {
+        if (spline.isDetached) {
+          return {
+            valid: false,
+            error: `Attached tributary ${spline.id} cannot have isDetached=true`,
+          };
+        }
 
-      if (!parentSpline.nodeIds.includes(spline.parentJunction as string)) {
-        return {
-          valid: false,
-          error: `Junction ${spline.parentJunction} is not part of parent spline ${parentSpline.id}`,
-        };
+        if (spline.parentJunction === null) {
+          return {
+            valid: false,
+            error: `Tributary ${spline.id} missing parent junction reference`,
+          };
+        }
+
+        const parentSpline = graph.splines[spline.parentId];
+        if (!parentSpline) {
+          return {
+            valid: false,
+            error: `Tributary ${spline.id} references non-existent parent ${spline.parentId}`,
+          };
+        }
+
+        if (!parentSpline.nodeIds.includes(spline.parentJunction as string)) {
+          return {
+            valid: false,
+            error: `Junction ${spline.parentJunction} is not part of parent spline ${parentSpline.id}`,
+          };
+        }
       }
     } else {
       if (spline.parentId !== null || spline.parentJunction !== null) {
@@ -269,9 +346,7 @@ export function canAttachToNode(
   }
 
   // Prevent attaching to endpoints of any owning river
-  const attachableSpline =
-    owningSplines.find((spline) => graph.mainSplineId !== null && spline.id === graph.mainSplineId) ||
-    owningSplines[0];
+  const attachableSpline = owningSplines.find((spline) => spline.isMain) || owningSplines[0];
   const nodeIndex = attachableSpline.nodeIds.indexOf(nodeId as string);
 
   if (nodeIndex <= 0) {

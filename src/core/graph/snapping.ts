@@ -339,7 +339,7 @@ export function findTributarySnapTarget(
     // Only snap to main river or independent rivers (not tributaries)
     (splineId) => {
       const spline = graph.splines[splineId];
-      return spline && (splineId === graph.mainSplineId || (spline.kind === 'river' && !spline.parentId));
+      return spline && spline.parentId === null;
     }
   );
 
