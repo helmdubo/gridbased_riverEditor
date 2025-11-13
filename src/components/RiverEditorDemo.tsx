@@ -15,6 +15,7 @@ import GraphService from '@services/GraphService';
 import type { NodeId, SplineId, Spline } from '@/core/graph/types';
 import { makeNodeId } from '@/core/graph/types';
 import { findTributarySnapTarget, type SnapTargetNode, type SplineSnapResult } from '@/core/graph/snapping';
+import { canMergeNodes, getMergeSurvivor } from '@/core/graph/nodeKinds';
 
 interface RiverEditorDemoProps {
   cols: number;
@@ -81,6 +82,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     updateSplineWidth,
     activeSpline,
     mainSpline,
+    mergeNodes,
   } = useRiverGraphV2();
 
   const computeWidthPx = useCallback(
@@ -445,36 +447,113 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       moveNode(makeNodeId(draggingTributaryInfo.pointId), newX, newY);
     }
 
-    // Check for snapping when not dragging
-    if (!isDragging) {
-      const snapTarget = findTributarySnapTarget(
-        riverGraph,
-        geometryCache,
-        x,
-        y,
-        SNAP_DISTANCE,
-        SPLINE_SNAP_DISTANCE,
-        mainRiverWidthPx
-      );
+    // Check for snapping ONLY when dragging (to show target highlights)
+    if (isDragging) {
+      let snapFound = false;
 
-      if (snapTarget) {
-        if (snapTarget.type === 'node') {
-          setSnapTargetNode(snapTarget.data);
-          setSplineSnapInfo(null);
-        } else {
-          setSnapTargetNode(null);
-          setSplineSnapInfo(snapTarget.data);
+      // Priority 1: Check for same-spline node merge (if dragging a point)
+      const actualDraggedId = draggingPointId || (draggingTributaryInfo ? makeNodeId(draggingTributaryInfo.pointId) : null);
+
+      if (actualDraggedId) {
+        // Find which spline contains the dragged node
+        const draggedSplineEntry = Object.entries(riverGraph.splines).find(([, spline]) =>
+          spline.nodeIds.includes(actualDraggedId as string)
+        );
+
+        if (draggedSplineEntry) {
+          const [draggedSplineId, draggedSpline] = draggedSplineEntry;
+
+          // Look for other nodes in the same spline within snap distance
+          for (const nodeIdStr of draggedSpline.nodeIds) {
+            const nodeId = makeNodeId(nodeIdStr);
+            if (nodeId === actualDraggedId) continue; // Skip self
+
+            const node = riverGraph.nodes[nodeIdStr];
+            if (!node) continue;
+
+            const dist = Math.hypot(node.x - x, node.y - y);
+            if (dist < SNAP_DISTANCE) {
+              // Check if merge is allowed
+              if (canMergeNodes(riverGraph, actualDraggedId, nodeId)) {
+                setSnapTargetNode({
+                  nodeId,
+                  node,
+                  distance: dist,
+                });
+                setSplineSnapInfo(null);
+                snapFound = true;
+                break;
+              }
+            }
+          }
         }
-      } else {
+      }
+
+      // Priority 2: Check for tributary attachment targets (if no merge target found)
+      if (!snapFound) {
+        const snapTarget = findTributarySnapTarget(
+          riverGraph,
+          geometryCache,
+          x,
+          y,
+          SNAP_DISTANCE,
+          SPLINE_SNAP_DISTANCE,
+          mainRiverWidthPx
+        );
+
+        if (snapTarget) {
+          if (snapTarget.type === 'node') {
+            setSnapTargetNode(snapTarget.data);
+            setSplineSnapInfo(null);
+          } else {
+            setSnapTargetNode(null);
+            setSplineSnapInfo(snapTarget.data);
+          }
+          snapFound = true;
+        }
+      }
+
+      // Clear if no snap target found
+      if (!snapFound) {
         setSnapTargetNode(null);
         setSplineSnapInfo(null);
       }
+    } else {
+      // Clear snap highlights when not dragging
+      setSnapTargetNode(null);
+      setSplineSnapInfo(null);
     }
   }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraphForOverlay, cols, rows, gridSize, capturedPointerId, riverGraph, geometryCache, mainRiverWidthPx]);
 
   const handleOverlayPointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     if (draggingPointId || draggingTributaryInfo) {
       console.log('✅ Drag complete');
+
+      // Check if we should merge nodes
+      const actualDraggedId = draggingPointId || (draggingTributaryInfo ? makeNodeId(draggingTributaryInfo.pointId) : null);
+
+      if (actualDraggedId && snapTargetNode) {
+        const targetNodeId = snapTargetNode.nodeId;
+
+        // Check if merge is allowed
+        if (canMergeNodes(riverGraph, actualDraggedId, targetNodeId)) {
+          console.log('🔄 Merging nodes:', { draggedId: actualDraggedId, targetId: targetNodeId });
+
+          // Determine survivor
+          const survivorId = getMergeSurvivor(riverGraph, actualDraggedId, targetNodeId);
+          console.log('✅ Survivor:', survivorId);
+
+          // Perform merge
+          mergeNodes(actualDraggedId, targetNodeId, survivorId);
+        } else {
+          console.log('🚫 Cannot merge these nodes');
+        }
+      }
+
+      // Clear snap highlights
+      setSnapTargetNode(null);
+      setSplineSnapInfo(null);
+
       setDraggingPointId(null);
       setDraggingTributaryInfo(null);
 
@@ -483,11 +562,16 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
         wasDraggingRef.current = false;
       }, 50);
     }
-  }, [draggingPointId, draggingTributaryInfo]);
+  }, [draggingPointId, draggingTributaryInfo, snapTargetNode, riverGraph, mergeNodes]);
 
   const handleOverlayMouseLeave = useCallback(() => {
     if (draggingPointId || draggingTributaryInfo) {
       console.log('⚠️ Drag cancelled (mouse left canvas)');
+
+      // Clear snap highlights
+      setSnapTargetNode(null);
+      setSplineSnapInfo(null);
+
       setDraggingPointId(null);
       setDraggingTributaryInfo(null);
 
