@@ -172,7 +172,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   };
 
   // Renderer with geometry cache + P0 bugfixes
-  const { canvasRef, legacyGraph, render } = useRiverRendererV2(
+  const { canvasRef, render } = useRiverRendererV2(
     riverGraph,
     mainRiverWidthPx,
     cols,
@@ -185,6 +185,56 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       flowStrength: 1.0,
     }
   );
+
+  // TEMPORARY: Convert V2 graph to legacy format for RiverOverlay
+  // TODO: Update RiverOverlay to work with RiverGraphV2 directly
+  const legacyGraphForOverlay = React.useMemo(() => {
+    const mainRiver: Array<{ x: number; y: number; id: string }> = [];
+    const tributaries = new Map<string, any>();
+
+    const mainSplineId = riverGraph.mainSplineId;
+    const mainSpline = mainSplineId ? riverGraph.splines[mainSplineId] : null;
+
+    if (mainSpline) {
+      for (const nodeId of mainSpline.nodeIds) {
+        const node = riverGraph.nodes[nodeId];
+        if (node) {
+          mainRiver.push({ x: node.x, y: node.y, id: node.id });
+        }
+      }
+    }
+
+    for (const [splineId, spline] of Object.entries(riverGraph.splines)) {
+      if (splineId === mainSplineId) continue;
+
+      const points: Array<{ x: number; y: number; id: string }> = [];
+      for (const nodeId of spline.nodeIds) {
+        const node = riverGraph.nodes[nodeId];
+        if (node) {
+          points.push({ x: node.x, y: node.y, id: node.id });
+        }
+      }
+
+      if (points.length > 0) {
+        const isIndependent = spline.kind === 'river' && !spline.parentId;
+        const isDetached = spline.kind === 'tributary' && spline.parentId === null;
+
+        tributaries.set(splineId, {
+          id: splineId,
+          parentPointId: spline.parentJunction,
+          points,
+          widthPercent: spline.width.kind === 'relative' ? spline.width.value : 50,
+          isDetached,
+          isIndependent,
+          resolvedWidthPx: computeWidthPx(spline),
+          parentSplineId: spline.parentId,
+          widthKind: spline.width.kind,
+        });
+      }
+    }
+
+    return { mainRiver, tributaries };
+  }, [riverGraph, computeWidthPx]);
 
   // Render on changes
   useEffect(() => {
@@ -271,7 +321,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       let found = false;
 
       // Check main river points
-      legacyGraph.mainRiver.forEach((p) => {
+      legacyGraphForOverlay.mainRiver.forEach((p) => {
         if (!found && Math.hypot(p.x - x, p.y - y) < 15) {
           setHoveredPointId(p.id);
           setHoveredTributaryId(null);
@@ -282,7 +332,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
 
       // Check tributary points
       if (!found) {
-        legacyGraph.tributaries.forEach((trib, id) => {
+        legacyGraphForOverlay.tributaries.forEach((trib, id) => {
           trib.points.forEach((p) => {
             if (!found && Math.hypot(p.x - x, p.y - y) < 15) {
               setHoveredPointId(null);
@@ -315,7 +365,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       const newY = Math.max(0, Math.min(rows * gridSize, y));
       moveNode(makeNodeId(draggingTributaryInfo.pointId), newX, newY);
     }
-  }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraph, cols, rows, gridSize]);
+  }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraphForOverlay, cols, rows, gridSize]);
 
   const handleOverlayMouseUp = useCallback(() => {
     if (draggingPointId || draggingTributaryInfo) {
@@ -581,7 +631,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
           overlayRef={overlayRef}
           width={cols * gridSize}
           height={rows * gridSize}
-          riverGraph={legacyGraph}
+          riverGraph={legacyGraphForOverlay}
           activeSplineId={activeSplineId ?? 'main'}
           selectedPointId={selectedNodeId}
           hoveredPointId={hoveredPointId}

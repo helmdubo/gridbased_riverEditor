@@ -3,7 +3,7 @@
  *
  * This hook manages:
  * - Geometry cache for splines (curves + frames + segIndexAt)
- * - Conversion to legacy format via GraphAdapter
+ * - Direct rendering from RiverGraphV2 (no legacy adapter)
  * - Flow field computation
  * - Canvas rendering with devicePixelRatio (P0 BUGFIX!)
  */
@@ -13,10 +13,9 @@ import type { RiverGraphV2 } from '@/core/graph/types';
 import type { GraphCache } from '@/core/geometry/cache';
 import type { RiverType } from '@domain/models/types';
 import { buildGraphCache, clearCache } from '@/core/geometry/cache';
-import { convertToLegacyFormat } from '@services/GraphAdapter';
-import { RenderService, FlowService } from '@services';
+import { RenderServiceV2, type RenderOptionsV2 } from '@services/RenderServiceV2';
+import { FlowService } from '@services';
 import type { FlowField } from '@services/FlowService';
-import type { RenderOptions } from '@services/RenderService';
 
 export const useRiverRendererV2 = (
   riverGraph: RiverGraphV2,
@@ -70,16 +69,10 @@ export const useRiverRendererV2 = (
     setGeometryCache(newCache);
   }, [riverGraph]);
 
-  // Convert to legacy format (memoized)
-  const legacyGraph = useMemo(
-    () => convertToLegacyFormat(riverGraph),
-    [riverGraph]
-  );
-
-  // Build curve data for rendering (uses legacy RenderService)
+  // Build curve data for rendering (uses GraphCache directly)
   const curveData = useMemo(
-    () => RenderService.buildCurveData(legacyGraph, mainRiverbedWidth),
-    [legacyGraph, mainRiverbedWidth]
+    () => RenderServiceV2.buildCurveData(riverGraph, geometryCache, mainRiverbedWidth),
+    [riverGraph, geometryCache, mainRiverbedWidth]
   );
 
   // Compute flow field
@@ -106,16 +99,16 @@ export const useRiverRendererV2 = (
 
   // Render to canvas
   const render = useCallback(
-    (options: RenderOptions, riverType: RiverType = 'Равнинная река') => {
+    (options: RenderOptionsV2, riverType: RiverType = 'Равнинная река') => {
       const canvas = canvasRef.current;
       if (!canvas) return;
 
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      console.log('🎨 Rendering:', {
-        nodes: Object.keys(legacyGraph.mainRiver).length,
-        tributaries: legacyGraph.tributaries.size,
+      console.log('🎨 Rendering V2:', {
+        nodes: Object.keys(riverGraph.nodes).length,
+        splines: Object.keys(riverGraph.splines).length,
         curveData: curveData.length,
       });
 
@@ -130,8 +123,8 @@ export const useRiverRendererV2 = (
         ? (flowField || computeFlowField(riverType))
         : null;
 
-      // Render grid with flow map
-      RenderService.renderGrid(
+      // Render grid with flow map (V2)
+      RenderServiceV2.renderGrid(
         ctx,
         gridCols,
         gridRows,
@@ -141,17 +134,18 @@ export const useRiverRendererV2 = (
         options
       );
 
-      // Render splines
-      RenderService.renderSplines(
+      // Render splines (V2)
+      RenderServiceV2.renderSplines(
         ctx,
-        legacyGraph,
+        riverGraph,
+        geometryCache,
         mainRiverbedWidth,
         options
       );
 
-      console.log('✅ Render complete');
+      console.log('✅ Render V2 complete');
     },
-    [legacyGraph, curveData, flowField, computeFlowField, gridCols, gridRows, gridSize, mainRiverbedWidth]
+    [riverGraph, geometryCache, curveData, flowField, computeFlowField, gridCols, gridRows, gridSize, mainRiverbedWidth]
   );
 
   // Auto-render when data changes
@@ -162,7 +156,6 @@ export const useRiverRendererV2 = (
   return {
     canvasRef,
     geometryCache,
-    legacyGraph, // Export for overlay rendering
     curveData,
     flowField,
     computeFlowField,
