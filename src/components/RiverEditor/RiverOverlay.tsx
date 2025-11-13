@@ -59,29 +59,14 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
   onTributaryPointClick,
   onTributaryPointDoubleClick,
 }) => {
-  // P0 BUGFIX: Pointer Capture for stable drag across all browsers
-  const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
-    // Capture pointer to receive events even when cursor moves outside SVG
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-
-  const handlePointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
-    // Release pointer capture
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    }
-    onPointerUp(e);
-  };
-
   return (
     <svg
       ref={overlayRef}
       width={width}
       height={height}
       style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'auto' }}
-      onPointerDown={handlePointerDown}
       onPointerMove={onPointerMove}
-      onPointerUp={handlePointerUp}
+      onPointerUp={onPointerUp}
       onPointerLeave={onPointerLeave}
       onClick={(event) => {
         if (event.target === event.currentTarget) {

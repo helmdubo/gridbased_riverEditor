@@ -36,6 +36,30 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   const [draggingPointId, setDraggingPointId] = useState<NodeId | null>(null);
   const [draggingTributaryInfo, setDraggingTributaryInfo] = useState<{ id: string; pointId: string; isMouth: boolean } | null>(null);
   const overlayRef = useRef<SVGSVGElement>(null);
+  const [capturedPointerId, setCapturedPointerId] = useState<number | null>(null);
+
+  // P0 BUGFIX: Pointer capture for stable drag - capture ONLY when dragging starts
+  useEffect(() => {
+    const isDragging = draggingPointId !== null || draggingTributaryInfo !== null;
+    const overlay = overlayRef.current;
+
+    if (isDragging && overlay && capturedPointerId === null) {
+      // Capture mouse pointer (ID = 1 for mouse, touch events have different IDs)
+      // We'll capture in the actual pointerDown event
+      console.log('🔒 Drag started - ready to capture pointer');
+    } else if (!isDragging && overlay && capturedPointerId !== null) {
+      // Release capture when drag ends
+      try {
+        if (overlay.hasPointerCapture(capturedPointerId)) {
+          overlay.releasePointerCapture(capturedPointerId);
+          console.log('🔓 Drag ended - pointer released');
+        }
+      } catch (e) {
+        console.warn('Failed to release pointer capture:', e);
+      }
+      setCapturedPointerId(null);
+    }
+  }, [draggingPointId, draggingTributaryInfo, capturedPointerId]);
 
   // River graph state (V2)
   const {
@@ -313,12 +337,24 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    // Capture pointer when drag starts
+    const isDragging = draggingPointId !== null || draggingTributaryInfo !== null;
+    if (isDragging && capturedPointerId === null && overlayRef.current) {
+      try {
+        overlayRef.current.setPointerCapture(e.pointerId);
+        setCapturedPointerId(e.pointerId);
+        console.log('🔒 Pointer captured:', e.pointerId);
+      } catch (err) {
+        console.warn('Failed to capture pointer:', err);
+      }
+    }
+
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
     // Update hover state when not dragging
-    if (!draggingPointId && !draggingTributaryInfo) {
+    if (!isDragging) {
       let found = false;
 
       // Check main river points
@@ -366,7 +402,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       const newY = Math.max(0, Math.min(rows * gridSize, y));
       moveNode(makeNodeId(draggingTributaryInfo.pointId), newX, newY);
     }
-  }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraphForOverlay, cols, rows, gridSize]);
+  }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraphForOverlay, cols, rows, gridSize, capturedPointerId]);
 
   const handleOverlayPointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     if (draggingPointId || draggingTributaryInfo) {
