@@ -303,29 +303,7 @@ export class GraphService {
    * @returns Updated graph and new node ID
    */
   static addNodeToSpline(graph: RiverGraphV2, splineId: SplineId, x: number, y: number) {
-    const spline = graph.splines[splineId];
-    if (!spline) {
-      throw new Error(`Spline ${splineId} not found`);
-    }
-
-    // Add new node
-    const { graph: graphWithNode, nodeId } = graphOps.addNode(graph, x, y);
-
-    // Add node to spline's nodeIds
-    const updatedEdge = {
-      ...spline,
-      nodeIds: [...spline.nodeIds, nodeId as string],
-    };
-
-    const finalGraph = {
-      ...graphWithNode,
-      splines: {
-        ...graphWithNode.splines,
-        [splineId]: updatedEdge,
-      },
-    };
-
-    return { graph: finalGraph, nodeId };
+    return graphOps.extendDownstream(graph, splineId, x, y);
   }
 
   /**
@@ -355,27 +333,7 @@ export class GraphService {
       throw new Error(`Node ${afterNodeId} not found in spline ${splineId}`);
     }
 
-    // Add new node
-    const { graph: graphWithNode, nodeId } = graphOps.addNode(graph, x, y);
-
-    // Insert node into spline's nodeIds
-    const newNodeIds = [...spline.nodeIds];
-    newNodeIds.splice(afterIndex + 1, 0, nodeId as string);
-
-    const updatedEdge = {
-      ...spline,
-      nodeIds: newNodeIds,
-    };
-
-    const finalGraph = {
-      ...graphWithNode,
-      splines: {
-        ...graphWithNode.splines,
-        [splineId]: updatedEdge,
-      },
-    };
-
-    return { graph: finalGraph, nodeId };
+    return graphOps.insertBetween(graph, splineId, afterIndex, x, y);
   }
 
   /**

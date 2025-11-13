@@ -186,7 +186,7 @@ export const RiverEditor: React.FC<RiverEditorProps> = ({
     deleteTributaryPoint(tributaryId, pointId);
   };
 
-  const handleSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+  const handleOverlayPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const svg = e.currentTarget;
     const rect = svg.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -326,9 +326,9 @@ export const RiverEditor: React.FC<RiverEditorProps> = ({
           hoveredTributaryPointId={hoveredTributaryPointId}
           snapTargetPointId={snapTargetPointId}
           insertPointPreview={insertPointPreview}
-          onMouseMove={handleSvgMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
+          onPointerMove={handleOverlayPointerMove}
+          onPointerUp={handleMouseUp}
+          onPointerLeave={handleMouseUp}
           onPointMouseDown={setDraggingPointId}
           onPointClick={handlePointClick}
           onPointDoubleClick={handlePointDoubleClick}

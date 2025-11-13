@@ -121,7 +121,7 @@ export function findSplineSnapPoint(
   let closestSnap: SplineSnapResult | null = null;
   let closestDist = snapDistance;
 
-  for (const [splineId, spline] of Object.entries(graph.splines)) {
+  for (const [splineId] of Object.entries(graph.splines)) {
     // Apply filter if provided
     if (filter && !filter(splineId as SplineId)) {
       continue;

@@ -202,14 +202,13 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     if (!splineWithNode) return null;
 
     const nodeIndex = splineWithNode.nodeIds.indexOf(selectedNodeId as string);
-    const isSource = nodeIndex === 0;
-    const isMouth = nodeIndex === splineWithNode.nodeIds.length - 1;
     const isJunction = GraphService.isJunctionNode(riverGraph, selectedNodeId);
+    const node = riverGraph.nodes[selectedNodeId];
 
-    let nodeType = 'mid';
-    if (isSource) nodeType = 'source';
-    else if (isMouth) nodeType = 'mouth';
-    if (isJunction) nodeType += '+junction';
+    let nodeType: string = node?.kind ?? 'inner';
+    if (isJunction && nodeType !== 'junction') {
+      nodeType = `${nodeType}+junction`;
+    }
 
     return {
       spline: splineWithNode,
@@ -237,8 +236,21 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   // TEMPORARY: Convert V2 graph to legacy format for RiverOverlay
   // TODO: Update RiverOverlay to work with RiverGraphV2 directly
   const legacyGraphForOverlay = React.useMemo(() => {
-    const mainRiver: Array<{ x: number; y: number; id: string }> = [];
-    const tributaries = new Map<string, any>();
+    type LegacyPoint = { x: number; y: number; id: string };
+    type LegacyTributary = {
+      id: string;
+      parentPointId: string | null;
+      points: LegacyPoint[];
+      widthPercent: number;
+      isDetached: boolean;
+      isIndependent: boolean;
+      resolvedWidthPx: number;
+      parentSplineId: string | null;
+      widthKind: 'px' | 'relative';
+    };
+
+    const mainRiver: LegacyPoint[] = [];
+    const tributaries = new Map<string, LegacyTributary>();
 
     const mainSplineId = riverGraph.mainSplineId;
     const mainSpline = mainSplineId ? riverGraph.splines[mainSplineId] : null;
@@ -255,7 +267,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     for (const [splineId, spline] of Object.entries(riverGraph.splines)) {
       if (splineId === mainSplineId) continue;
 
-      const points: Array<{ x: number; y: number; id: string }> = [];
+      const points: LegacyPoint[] = [];
       for (const nodeId of spline.nodeIds) {
         const node = riverGraph.nodes[nodeId];
         if (node) {
@@ -504,7 +516,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
         );
 
         if (draggedSplineEntry) {
-          const [draggedSplineId, draggedSpline] = draggedSplineEntry;
+          const [, draggedSpline] = draggedSplineEntry;
 
           // Look for other nodes in the same spline within snap distance
           for (const nodeIdStr of draggedSpline.nodeIds) {
@@ -533,7 +545,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
 
         // Priority 2: Check for spline merge (end-to-end connection) across different splines
         if (!snapFound && actualDraggedId) {
-          for (const [splineId, spline] of Object.entries(riverGraph.splines)) {
+          for (const [, spline] of Object.entries(riverGraph.splines)) {
             for (const nodeIdStr of spline.nodeIds) {
               const nodeId = makeNodeId(nodeIdStr);
               if (nodeId === actualDraggedId) continue; // Skip self
@@ -608,7 +620,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     }
   }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraphForOverlay, cols, rows, gridSize, capturedPointerId, riverGraph, geometryCache, mainRiverWidthPx]);
 
-  const handleOverlayPointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
+  const handleOverlayPointerUp = useCallback((_e: React.PointerEvent<SVGSVGElement>) => {
     if (draggingPointId || draggingTributaryInfo) {
       console.log('✅ Drag complete');
 

@@ -24,6 +24,7 @@ import type {
   Width,
 } from './types';
 import { makeNodeId, makeSplineId } from './types';
+import { computeNodeKind } from './nodeKinds';
 import { generateId } from '../geometry/geometry';
 
 /**
@@ -63,6 +64,24 @@ function cloneGraph(graph: RiverGraphV2): RiverGraphV2 {
 }
 
 /**
+ * Recomputes node kinds for every node in the graph based on current topology
+ */
+function refreshAllNodeKinds(graph: RiverGraphV2): void {
+  for (const nodeKey of Object.keys(graph.nodes)) {
+    const nodeId = nodeKey as NodeId;
+    const node = graph.nodes[nodeId];
+    if (!node) {
+      continue;
+    }
+
+    const nextKind = computeNodeKind(graph, nodeId);
+    if (node.kind !== nextKind) {
+      graph.nodes[nodeId] = { ...node, kind: nextKind };
+    }
+  }
+}
+
+/**
  * Adds a new node to the graph at the specified position
  *
  * @param graph - Current graph state
@@ -82,6 +101,7 @@ export function addNode(graph: RiverGraphV2, x: number, y: number): AddNodeResul
     id: nodeId,
     x,
     y,
+    kind: 'inner',
   };
 
   newGraph.nodes[nodeId] = node;
@@ -165,6 +185,8 @@ export function deleteNode(graph: RiverGraphV2, nodeId: NodeId): RiverGraphV2 {
       children: parentSpline.children.filter((id) => id !== childId),
     };
   }
+
+  refreshAllNodeKinds(newGraph);
 
   return newGraph;
 }
@@ -251,6 +273,8 @@ export function createSpline(
     newGraph.mainSplineId = splineId;
   }
 
+  refreshAllNodeKinds(newGraph);
+
   return {
     graph: newGraph,
     splineId,
@@ -304,6 +328,8 @@ export function splitSpline(
     nodeIds: newNodeIds,
   };
 
+  refreshAllNodeKinds(newGraph);
+
   return newGraph;
 }
 
@@ -330,6 +356,8 @@ export function deleteSpline(graph: RiverGraphV2, splineId: SplineId): RiverGrap
   if (newGraph.mainSplineId === splineId) {
     newGraph.mainSplineId = null;
   }
+
+  refreshAllNodeKinds(newGraph);
 
   return newGraph;
 }
@@ -441,6 +469,8 @@ export function attachTributary(
     children: [...parentSpline.children, childSplineId],
   };
 
+  refreshAllNodeKinds(newGraph);
+
   return newGraph;
 }
 
@@ -537,6 +567,8 @@ export function detachTributary(
     width: detachedWidth,
   };
 
+  refreshAllNodeKinds(newGraph);
+
   return {
     graph: newGraph,
     nodeId: newMouthNodeId,
@@ -575,6 +607,8 @@ export function reverseSpline(graph: RiverGraphV2, splineId: SplineId): RiverGra
     ...spline,
     nodeIds: [...spline.nodeIds].reverse(),
   };
+
+  refreshAllNodeKinds(newGraph);
 
   return newGraph;
 }
@@ -616,6 +650,8 @@ export function extendUpstream(
     ...spline,
     nodeIds: [newNodeId as string, ...spline.nodeIds],
   };
+
+  refreshAllNodeKinds(newGraph);
 
   return {
     graph: newGraph,
@@ -662,6 +698,8 @@ export function extendDownstream(
     ...spline,
     nodeIds: [...spline.nodeIds, newNodeId as string],
   };
+
+  refreshAllNodeKinds(newGraph);
 
   return {
     graph: newGraph,
@@ -715,6 +753,8 @@ export function insertBetween(
     ...spline,
     nodeIds: newNodeIds,
   };
+
+  refreshAllNodeKinds(newGraph);
 
   return {
     graph: newGraph,
@@ -845,6 +885,8 @@ export function mergeNodes(
   // Delete loser node
   delete newGraph.nodes[loserNodeId];
 
+  refreshAllNodeKinds(newGraph);
+
   return newGraph;
 }
 
@@ -945,6 +987,8 @@ export function attachSplineAsTributary(
 
   // Delete the dragged node (it's now replaced by target junction)
   delete newGraph.nodes[draggedNodeId];
+
+  refreshAllNodeKinds(newGraph);
 
   return newGraph;
 }
@@ -1083,6 +1127,8 @@ export function mergeSplines(
   if (newGraph.mainSplineId === absorbedSplineId) {
     newGraph.mainSplineId = survivorSplineId;
   }
+
+  refreshAllNodeKinds(newGraph);
 
   return newGraph;
 }

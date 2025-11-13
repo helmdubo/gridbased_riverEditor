@@ -8,6 +8,7 @@
  */
 
 import type { RiverGraphV2, NodeId, SplineId, Spline } from './types';
+import { computeNodeKind } from './nodeKinds';
 
 /**
  * Validation result with optional error message
@@ -152,6 +153,23 @@ export function isValidGraph(graph: RiverGraphV2): ValidationResult {
     }
   }
 
+  // Validate stored node kinds against derived topology
+  for (const nodeKey of Object.keys(graph.nodes)) {
+    const nodeId = nodeKey as NodeId;
+    const node = graph.nodes[nodeId];
+    if (!node) {
+      continue;
+    }
+
+    const expectedKind = computeNodeKind(graph, nodeId);
+    if (node.kind !== expectedKind) {
+      return {
+        valid: false,
+        error: `Node ${nodeId} has kind ${node.kind} but expected ${expectedKind}`,
+      };
+    }
+  }
+
   return { valid: true };
 }
 
@@ -166,6 +184,15 @@ export function isValidGraph(graph: RiverGraphV2): ValidationResult {
  * static bool IsJunctionNode(const FRiverGraph& Graph, const FGuid& NodeId);
  */
 export function isJunctionNode(graph: RiverGraphV2, nodeId: NodeId): boolean {
+  const node = graph.nodes[nodeId];
+  if (!node) {
+    return false;
+  }
+
+  if (node.kind === 'junction') {
+    return true;
+  }
+
   let edgeCount = 0;
 
   for (const spline of Object.values(graph.splines)) {
@@ -190,24 +217,9 @@ export function isJunctionNode(graph: RiverGraphV2, nodeId: NodeId): boolean {
  * static TArray<FGuid> FindJunctionNodes(const FRiverGraph& Graph);
  */
 export function findJunctionNodes(graph: RiverGraphV2): NodeId[] {
-  const nodeCounts = new Map<string, number>();
-
-  // Count spline references for each node
-  for (const spline of Object.values(graph.splines)) {
-    for (const nodeId of spline.nodeIds) {
-      nodeCounts.set(nodeId as string, (nodeCounts.get(nodeId as string) || 0) + 1);
-    }
-  }
-
-  // Filter nodes with 2+ references
-  const junctions: NodeId[] = [];
-  for (const [nodeId, count] of nodeCounts.entries()) {
-    if (count >= 2) {
-      junctions.push(nodeId as NodeId);
-    }
-  }
-
-  return junctions;
+  return Object.entries(graph.nodes)
+    .filter(([, node]) => node?.kind === 'junction')
+    .map(([nodeId]) => nodeId as NodeId);
 }
 
 /**
