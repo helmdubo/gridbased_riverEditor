@@ -438,6 +438,40 @@ export class GraphService {
   ): RiverGraphV2 {
     return graphOps.mergeNodes(graph, draggedNodeId, targetNodeId, survivorNodeId);
   }
+
+  /**
+   * Attaches an existing spline as a tributary to another spline
+   *
+   * @param graph - Current graph
+   * @param draggedNodeId - Endpoint node (source or mouth) of spline to attach
+   * @param targetNodeId - Node where tributary will attach (becomes junction)
+   * @returns Updated graph with spline attached as tributary
+   */
+  static attachSplineAsTributary(
+    graph: RiverGraphV2,
+    draggedNodeId: NodeId,
+    targetNodeId: NodeId
+  ): RiverGraphV2 {
+    return graphOps.attachSplineAsTributary(graph, draggedNodeId, targetNodeId);
+  }
+
+  /**
+   * Merges two splines end-to-end (river extension)
+   *
+   * Target spline always survives (keeps attributes), dragged spline is absorbed.
+   *
+   * @param graph - Current graph
+   * @param draggedNodeId - Endpoint of dragged spline (source or mouth)
+   * @param targetNodeId - Endpoint of target spline (mouth or source)
+   * @returns Updated graph with splines merged
+   */
+  static mergeSplines(
+    graph: RiverGraphV2,
+    draggedNodeId: NodeId,
+    targetNodeId: NodeId
+  ): RiverGraphV2 {
+    return graphOps.mergeSplines(graph, draggedNodeId, targetNodeId);
+  }
 }
 
 export default GraphService;

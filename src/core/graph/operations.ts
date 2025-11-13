@@ -849,6 +849,245 @@ export function mergeNodes(
 }
 
 /**
+ * Attaches an existing spline as a tributary to another spline
+ *
+ * The dragged spline becomes a tributary attached to the target spline at the target node.
+ * The dragged node (source or mouth) is merged with the target junction node.
+ *
+ * Rules:
+ * - Dragged spline must not have children
+ * - Dragged node must be endpoint (source or mouth)
+ * - Target must be in different spline
+ *
+ * @param graph - Current graph state
+ * @param draggedNodeId - Endpoint node of spline to attach (source or mouth)
+ * @param targetNodeId - Junction node where tributary will attach
+ * @returns New graph with spline attached as tributary
+ *
+ * @ue_equivalent
+ * UFUNCTION(BlueprintCallable)
+ * static FRiverGraph AttachSplineAsTributary(const FRiverGraph& Graph,
+ *                                             FGuid DraggedNode,
+ *                                             FGuid TargetNode);
+ */
+export function attachSplineAsTributary(
+  graph: RiverGraphV2,
+  draggedNodeId: NodeId,
+  targetNodeId: NodeId
+): RiverGraphV2 {
+  const newGraph = cloneGraph(graph);
+
+  // Find splines containing each node
+  let draggedSplineId: SplineId | null = null;
+  let targetSplineId: SplineId | null = null;
+
+  for (const [splineId, spline] of Object.entries(newGraph.splines)) {
+    if (spline.nodeIds.includes(draggedNodeId as string)) {
+      draggedSplineId = splineId as SplineId;
+    }
+    if (spline.nodeIds.includes(targetNodeId as string)) {
+      targetSplineId = splineId as SplineId;
+    }
+  }
+
+  if (!draggedSplineId || !targetSplineId) {
+    console.warn('Cannot attach: nodes not found in splines');
+    return graph;
+  }
+
+  if (draggedSplineId === targetSplineId) {
+    console.warn('Cannot attach: nodes in same spline');
+    return graph;
+  }
+
+  const draggedSpline = newGraph.splines[draggedSplineId];
+  const targetSpline = newGraph.splines[targetSplineId];
+
+  // Check if dragged node is endpoint
+  const draggedIndex = draggedSpline.nodeIds.indexOf(draggedNodeId as string);
+  const isSource = draggedIndex === 0;
+  const isMouth = draggedIndex === draggedSpline.nodeIds.length - 1;
+
+  if (!isSource && !isMouth) {
+    console.warn('Cannot attach: dragged node is not endpoint');
+    return graph;
+  }
+
+  // Determine which end of tributary connects to parent
+  // If dragging source, it becomes the mouth (attach point)
+  // If dragging mouth, it stays as mouth (attach point)
+  let tributaryNodeIds = [...draggedSpline.nodeIds];
+
+  // If source is being attached, reverse the spline (so mouth becomes attach point)
+  if (isSource) {
+    tributaryNodeIds.reverse();
+  }
+
+  // Replace the attach point (mouth) with target junction node
+  tributaryNodeIds[tributaryNodeIds.length - 1] = targetNodeId as string;
+
+  // Update dragged spline to be tributary
+  newGraph.splines[draggedSplineId] = {
+    ...draggedSpline,
+    kind: 'tributary',
+    parentId: targetSplineId,
+    parentJunction: targetNodeId,
+    nodeIds: tributaryNodeIds,
+  };
+
+  // Add tributary to parent's children
+  if (!targetSpline.children.includes(draggedSplineId)) {
+    newGraph.splines[targetSplineId] = {
+      ...targetSpline,
+      children: [...targetSpline.children, draggedSplineId],
+    };
+  }
+
+  // Delete the dragged node (it's now replaced by target junction)
+  delete newGraph.nodes[draggedNodeId];
+
+  return newGraph;
+}
+
+/**
+ * Merges two splines end-to-end (river extension)
+ *
+ * Connects mouth of one spline to source of another, creating a single extended spline.
+ * The TARGET spline always survives and absorbs the dragged spline along with all its tributaries.
+ * The active (dragged) river flows into the target river.
+ *
+ * Rules:
+ * - One node must be source, other must be mouth (end-to-start connection)
+ * - Must be different splines
+ * - TARGET spline keeps its attributes (width, etc.) - always the leader
+ * - All tributaries of dragged spline are transferred to target spline
+ *
+ * @param graph - Current graph state
+ * @param draggedNodeId - Endpoint of dragged spline (source or mouth)
+ * @param targetNodeId - Endpoint of target spline (mouth or source)
+ * @returns New graph with splines merged
+ *
+ * @ue_equivalent
+ * UFUNCTION(BlueprintCallable)
+ * static FRiverGraph MergeSplines(const FRiverGraph& Graph,
+ *                                  FGuid DraggedNode,
+ *                                  FGuid TargetNode);
+ */
+export function mergeSplines(
+  graph: RiverGraphV2,
+  draggedNodeId: NodeId,
+  targetNodeId: NodeId
+): RiverGraphV2 {
+  const newGraph = cloneGraph(graph);
+
+  // Find splines containing each node
+  let draggedSplineId: SplineId | null = null;
+  let targetSplineId: SplineId | null = null;
+
+  for (const [splineId, spline] of Object.entries(newGraph.splines)) {
+    if (spline.nodeIds.includes(draggedNodeId as string)) {
+      draggedSplineId = splineId as SplineId;
+    }
+    if (spline.nodeIds.includes(targetNodeId as string)) {
+      targetSplineId = splineId as SplineId;
+    }
+  }
+
+  if (!draggedSplineId || !targetSplineId) {
+    console.warn('Cannot merge: nodes not found in splines');
+    return graph;
+  }
+
+  if (draggedSplineId === targetSplineId) {
+    console.warn('Cannot merge: nodes in same spline');
+    return graph;
+  }
+
+  const draggedSpline = newGraph.splines[draggedSplineId];
+  const targetSpline = newGraph.splines[targetSplineId];
+
+  // TARGET spline is ALWAYS the survivor (keeps its attributes)
+  // DRAGGED spline is ALWAYS absorbed (flows into target)
+  const survivorSplineId = targetSplineId;
+  const absorbedSplineId = draggedSplineId;
+
+  const survivorSpline = targetSpline;
+  const absorbedSpline = draggedSpline;
+
+  const survivorNodeId = targetNodeId;
+  const absorbedNodeId = draggedNodeId;
+
+  // Determine positions in arrays
+  const survivorIndex = survivorSpline.nodeIds.indexOf(survivorNodeId as string);
+  const absorbedIndex = absorbedSpline.nodeIds.indexOf(absorbedNodeId as string);
+
+  const survivorIsSource = survivorIndex === 0;
+  const survivorIsMouth = survivorIndex === survivorSpline.nodeIds.length - 1;
+  const absorbedIsSource = absorbedIndex === 0;
+  const absorbedIsMouth = absorbedIndex === absorbedSpline.nodeIds.length - 1;
+
+  // Merge nodeIds arrays
+  let mergedNodeIds: string[];
+
+  if (survivorIsMouth && absorbedIsSource) {
+    // Survivor mouth connects to absorbed source: [...survivor, ...absorbed]
+    // Keep survivor's mouth, skip absorbed's source (they merge into one node)
+    mergedNodeIds = [
+      ...survivorSpline.nodeIds,
+      ...absorbedSpline.nodeIds.slice(1), // Skip first node (source)
+    ];
+  } else if (survivorIsSource && absorbedIsMouth) {
+    // Survivor source connects to absorbed mouth: [...absorbed, ...survivor]
+    // Keep absorbed's mouth, skip survivor's source (they merge into one node)
+    mergedNodeIds = [
+      ...absorbedSpline.nodeIds,
+      ...survivorSpline.nodeIds.slice(1), // Skip first node (source)
+    ];
+  } else {
+    console.warn('Invalid merge: nodes are not in end-to-start configuration');
+    return graph;
+  }
+
+  // Transfer tributaries from absorbed spline to survivor
+  const mergedChildren = [...survivorSpline.children];
+
+  for (const childId of absorbedSpline.children) {
+    if (!mergedChildren.includes(childId)) {
+      mergedChildren.push(childId);
+
+      // Update child's parentId to point to survivor
+      const childSpline = newGraph.splines[childId];
+      if (childSpline) {
+        newGraph.splines[childId] = {
+          ...childSpline,
+          parentId: survivorSplineId,
+        };
+      }
+    }
+  }
+
+  // Update survivor spline with merged nodes and children
+  newGraph.splines[survivorSplineId] = {
+    ...survivorSpline,
+    nodeIds: mergedNodeIds,
+    children: mergedChildren,
+  };
+
+  // Delete absorbed node
+  delete newGraph.nodes[absorbedNodeId];
+
+  // Delete absorbed spline
+  delete newGraph.splines[absorbedSplineId];
+
+  // Update mainSplineId if absorbed spline was main
+  if (newGraph.mainSplineId === absorbedSplineId) {
+    newGraph.mainSplineId = survivorSplineId;
+  }
+
+  return newGraph;
+}
+
+/**
  * Creates an empty graph
  *
  * @ue_equivalent
