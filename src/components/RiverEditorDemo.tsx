@@ -37,6 +37,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   const [draggingTributaryInfo, setDraggingTributaryInfo] = useState<{ id: string; pointId: string; isMouth: boolean } | null>(null);
   const overlayRef = useRef<SVGSVGElement>(null);
   const [capturedPointerId, setCapturedPointerId] = useState<number | null>(null);
+  const wasDraggingRef = useRef(false); // Track if we were dragging to prevent click after drag
 
   // P0 BUGFIX: Pointer capture for stable drag - capture ONLY when dragging starts
   useEffect(() => {
@@ -306,6 +307,12 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   };
 
   const handleOverlayBackgroundClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    // Don't create vertex if we just finished dragging
+    if (wasDraggingRef.current) {
+      console.log('🚫 Ignoring click after drag');
+      return;
+    }
+
     const rect = e.currentTarget.getBoundingClientRect();
     handleStageClick(e.clientX - rect.left, e.clientY - rect.top);
   }, [handleStageClick]);
@@ -313,6 +320,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   // Node interaction handlers
   const handlePointMouseDown = useCallback((pointId: string) => {
     console.log('🖱️ Point mouse down:', pointId);
+    wasDraggingRef.current = false; // Reset flag when starting new interaction
     const nodeId = makeNodeId(pointId);
     setDraggingPointId(nodeId);
     selectNode(nodeId);
@@ -391,6 +399,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
 
     // Handle dragging main river point
     if (draggingPointId) {
+      wasDraggingRef.current = true; // Mark that we're dragging
       const newX = Math.max(0, Math.min(cols * gridSize, x));
       const newY = Math.max(0, Math.min(rows * gridSize, y));
       moveNode(draggingPointId, newX, newY);
@@ -398,6 +407,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
 
     // Handle dragging tributary point
     if (draggingTributaryInfo) {
+      wasDraggingRef.current = true; // Mark that we're dragging
       const newX = Math.max(0, Math.min(cols * gridSize, x));
       const newY = Math.max(0, Math.min(rows * gridSize, y));
       moveNode(makeNodeId(draggingTributaryInfo.pointId), newX, newY);
@@ -409,6 +419,11 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       console.log('✅ Drag complete');
       setDraggingPointId(null);
       setDraggingTributaryInfo(null);
+
+      // Reset wasDragging flag after a short delay to prevent onClick from firing
+      setTimeout(() => {
+        wasDraggingRef.current = false;
+      }, 50);
     }
   }, [draggingPointId, draggingTributaryInfo]);
 
@@ -417,12 +432,18 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       console.log('⚠️ Drag cancelled (mouse left canvas)');
       setDraggingPointId(null);
       setDraggingTributaryInfo(null);
+
+      // Reset wasDragging flag
+      setTimeout(() => {
+        wasDraggingRef.current = false;
+      }, 50);
     }
   }, [draggingPointId, draggingTributaryInfo]);
 
   // Tributary interaction
   const handleTributaryPointMouseDown = useCallback((id: string, pointId: string, isMouth: boolean) => {
     console.log('🖱️ Tributary point mouse down:', { id, pointId, isMouth });
+    wasDraggingRef.current = false; // Reset flag when starting new interaction
     setDraggingTributaryInfo({ id, pointId, isMouth });
     selectNode(makeNodeId(pointId));
     setActiveSpline(id as SplineId);
