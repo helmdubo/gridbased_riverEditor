@@ -131,10 +131,11 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
 
           // Mid-node: check if can create tributary first
           const canAttach = GraphService.canAttachToNode(riverGraph, selectedNodeId);
-          console.log('🔍 Can attach tributary to mid-node?', canAttach);
+          const isJunction = GraphService.isJunctionNode(riverGraph, selectedNodeId);
+          console.log('🔍 Selected node state:', { canAttach: canAttach.valid, isJunction });
 
           if (canAttach.valid) {
-            // Create tributary from this junction
+            // Create tributary from this mid-node (will become junction)
             console.log('🌿 Creating tributary from mid-node');
             const result = GraphService.createTributaryFromJunction(
               riverGraph,
@@ -150,9 +151,15 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
             return;
           }
 
+          // If node is already a junction, don't allow inserting new points
+          if (isJunction) {
+            console.log('🚫 Cannot insert after junction node - junction already has tributary');
+            return;
+          }
+
           // Otherwise, insert node after selected node
           try {
-            console.log('📌 Inserting node after selected node');
+            console.log('📌 Inserting node after selected mid-node');
             const result = GraphService.insertNodeAfter(
               riverGraph,
               mainSpline.id,
@@ -432,33 +439,21 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
   /**
    * Merges two splines end-to-end (river extension)
    *
+   * Target spline always survives (keeps attributes).
+   *
    * @param draggedNodeId - Endpoint of dragged spline (source or mouth)
    * @param targetNodeId - Endpoint of target spline (mouth or source)
    */
   const mergeSplines = useCallback(
     (draggedNodeId: NodeId, targetNodeId: NodeId) => {
-      // Determine active spline ID
-      const actualActiveSplineId = activeSplineId === 'main'
-        ? riverGraph.mainSplineId
-        : activeSplineId;
-
-      if (!actualActiveSplineId) {
-        console.warn('Cannot merge: no active spline');
-        return;
-      }
-
       const newGraph = GraphService.mergeSplines(
         riverGraph,
         draggedNodeId,
-        targetNodeId,
-        actualActiveSplineId
+        targetNodeId
       );
       setRiverGraph(newGraph);
-
-      // Keep active spline as active
-      setActiveSplineId(actualActiveSplineId);
     },
-    [riverGraph, activeSplineId]
+    [riverGraph]
   );
 
   /**

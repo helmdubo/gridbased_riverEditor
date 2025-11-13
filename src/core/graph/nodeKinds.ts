@@ -240,11 +240,12 @@ export function getMergeSurvivor(
  * - Dragged spline must not have children (no nested tributaries)
  * - Dragged node must be source or mouth (endpoint)
  * - Target must be in a different spline
- * - Target can be any node (will become junction) or spline segment
+ * - Target must be Mid point (default point, not source/mouth)
+ * - Target must NOT already be a junction (one tributary per node)
  *
  * @param graph - River graph
  * @param draggedNodeId - Node being dragged (must be source/mouth)
- * @param targetNodeId - Target node for attachment
+ * @param targetNodeId - Target node for attachment (must be mid point)
  * @returns True if attachment is allowed
  *
  * @ue_equivalent
@@ -292,8 +293,18 @@ export function canAttachAsTributary(
     return false;
   }
 
-  // Target can be any node (it will become junction if it isn't already)
-  // No additional restrictions on target
+  // Get target node kind
+  const targetKind = getNodeKind(graph, targetNodeId);
+
+  // Target must NOT already be a junction (one tributary per node)
+  if (targetKind === 'junction') {
+    return false;
+  }
+
+  // Target must be Mid point (not source/mouth - only mid points can become junctions)
+  if (targetKind !== 'mid') {
+    return false;
+  }
 
   return true;
 }

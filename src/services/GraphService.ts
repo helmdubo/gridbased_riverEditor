@@ -458,19 +458,19 @@ export class GraphService {
   /**
    * Merges two splines end-to-end (river extension)
    *
+   * Target spline always survives (keeps attributes), dragged spline is absorbed.
+   *
    * @param graph - Current graph
    * @param draggedNodeId - Endpoint of dragged spline (source or mouth)
    * @param targetNodeId - Endpoint of target spline (mouth or source)
-   * @param activeSplineId - ID of active spline (survives with its attributes)
    * @returns Updated graph with splines merged
    */
   static mergeSplines(
     graph: RiverGraphV2,
     draggedNodeId: NodeId,
-    targetNodeId: NodeId,
-    activeSplineId: SplineId
+    targetNodeId: NodeId
   ): RiverGraphV2 {
-    return graphOps.mergeSplines(graph, draggedNodeId, targetNodeId, activeSplineId);
+    return graphOps.mergeSplines(graph, draggedNodeId, targetNodeId);
   }
 }
 

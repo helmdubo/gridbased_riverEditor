@@ -953,32 +953,30 @@ export function attachSplineAsTributary(
  * Merges two splines end-to-end (river extension)
  *
  * Connects mouth of one spline to source of another, creating a single extended spline.
- * The active (target) spline survives and absorbs the dragged spline along with all its tributaries.
+ * The TARGET spline always survives and absorbs the dragged spline along with all its tributaries.
+ * The active (dragged) river flows into the target river.
  *
  * Rules:
  * - One node must be source, other must be mouth (end-to-start connection)
  * - Must be different splines
- * - Target spline keeps its attributes (width, etc.)
+ * - TARGET spline keeps its attributes (width, etc.) - always the leader
  * - All tributaries of dragged spline are transferred to target spline
  *
  * @param graph - Current graph state
  * @param draggedNodeId - Endpoint of dragged spline (source or mouth)
  * @param targetNodeId - Endpoint of target spline (mouth or source)
- * @param activeSplineId - ID of active spline (survives with its attributes)
  * @returns New graph with splines merged
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
  * static FRiverGraph MergeSplines(const FRiverGraph& Graph,
  *                                  FGuid DraggedNode,
- *                                  FGuid TargetNode,
- *                                  FGuid ActiveSplineId);
+ *                                  FGuid TargetNode);
  */
 export function mergeSplines(
   graph: RiverGraphV2,
   draggedNodeId: NodeId,
-  targetNodeId: NodeId,
-  activeSplineId: SplineId
+  targetNodeId: NodeId
 ): RiverGraphV2 {
   const newGraph = cloneGraph(graph);
 
@@ -1008,15 +1006,16 @@ export function mergeSplines(
   const draggedSpline = newGraph.splines[draggedSplineId];
   const targetSpline = newGraph.splines[targetSplineId];
 
-  // Determine which spline is the survivor (active spline keeps attributes)
-  const survivorSplineId = activeSplineId;
-  const absorbedSplineId = survivorSplineId === draggedSplineId ? targetSplineId : draggedSplineId;
+  // TARGET spline is ALWAYS the survivor (keeps its attributes)
+  // DRAGGED spline is ALWAYS absorbed (flows into target)
+  const survivorSplineId = targetSplineId;
+  const absorbedSplineId = draggedSplineId;
 
-  const survivorSpline = newGraph.splines[survivorSplineId];
-  const absorbedSpline = newGraph.splines[absorbedSplineId];
+  const survivorSpline = targetSpline;
+  const absorbedSpline = draggedSpline;
 
-  const survivorNodeId = survivorSplineId === draggedSplineId ? draggedNodeId : targetNodeId;
-  const absorbedNodeId = survivorSplineId === draggedSplineId ? targetNodeId : draggedNodeId;
+  const survivorNodeId = targetNodeId;
+  const absorbedNodeId = draggedNodeId;
 
   // Determine positions in arrays
   const survivorIndex = survivorSpline.nodeIds.indexOf(survivorNodeId as string);
