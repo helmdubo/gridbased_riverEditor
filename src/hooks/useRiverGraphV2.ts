@@ -9,6 +9,7 @@ import { useState, useCallback } from 'react';
 import type { RiverGraphV2, NodeId, SplineId, Spline } from '@/core/graph/types';
 import { makeWidthPx, makeWidthRelative, makeRiverAttributes } from '@/core/graph/types';
 import GraphService from '@services/GraphService';
+import ActionDispatcher from '@services/ActionDispatcher';
 
 export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
   const [riverGraph, setRiverGraph] = useState<RiverGraphV2>(
@@ -289,8 +290,10 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
    */
   const moveNode = useCallback(
     (nodeId: NodeId, x: number, y: number) => {
-      const newGraph = GraphService.moveNode(riverGraph, nodeId, x, y);
-      setRiverGraph(newGraph);
+      const result = ActionDispatcher.moveNode(riverGraph, nodeId, x, y);
+      if (result.success) {
+        setRiverGraph(result.graph);
+      }
     },
     [riverGraph]
   );
@@ -300,7 +303,14 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
    */
   const deleteNode = useCallback(
     (nodeId: NodeId) => {
-      let newGraph = GraphService.deleteNode(riverGraph, nodeId);
+      const result = ActionDispatcher.deleteNode(riverGraph, nodeId);
+
+      if (!result.success) {
+        console.error('Failed to delete node:', result.error);
+        return;
+      }
+
+      let newGraph = result.graph;
       newGraph = ensureMainSpline(newGraph);
 
       setRiverGraph(newGraph);
@@ -387,8 +397,10 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
   const updateSplineWidth = useCallback(
     (splineId: SplineId, widthValue: number, isAbsolute: boolean = false) => {
       const width = isAbsolute ? makeWidthPx(widthValue) : makeWidthRelative(widthValue);
-      const newGraph = GraphService.updateSplineWidth(riverGraph, splineId, width);
-      setRiverGraph(newGraph);
+      const result = ActionDispatcher.updateSplineWidth(riverGraph, splineId, width);
+      if (result.success) {
+        setRiverGraph(result.graph);
+      }
     },
     [riverGraph]
   );
@@ -427,8 +439,14 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
    */
   const mergeNodes = useCallback(
     (draggedNodeId: NodeId, targetNodeId: NodeId, survivorNodeId: NodeId) => {
-      const newGraph = GraphService.mergeNodes(riverGraph, draggedNodeId, targetNodeId, survivorNodeId);
-      setRiverGraph(newGraph);
+      const result = ActionDispatcher.mergeNodes(riverGraph, draggedNodeId, targetNodeId, survivorNodeId);
+
+      if (!result.success) {
+        console.error('Failed to merge nodes:', result.error);
+        return;
+      }
+
+      setRiverGraph(result.graph);
 
       // Update selected node to survivor if one of the merged nodes was selected
       if (selectedNodeId === draggedNodeId || selectedNodeId === targetNodeId) {
@@ -454,7 +472,14 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
         spline.nodeIds.includes(targetNodeId as string)
       );
 
-      let newGraph = GraphService.attachSplineAsTributary(riverGraph, draggedNodeId, targetNodeId);
+      const result = ActionDispatcher.attachSplineAsTributary(riverGraph, draggedNodeId, targetNodeId);
+
+      if (!result.success) {
+        console.error('Failed to attach spline as tributary:', result.error);
+        return;
+      }
+
+      let newGraph = result.graph;
 
       if (draggedSplineEntry && targetSplineEntry) {
         const [, draggedSpline] = draggedSplineEntry;
@@ -485,12 +510,14 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
    */
   const mergeSplines = useCallback(
     (draggedNodeId: NodeId, targetNodeId: NodeId) => {
-      const newGraph = GraphService.mergeSplines(
-        riverGraph,
-        draggedNodeId,
-        targetNodeId
-      );
-      setRiverGraph(newGraph);
+      const result = ActionDispatcher.mergeSplines(riverGraph, draggedNodeId, targetNodeId);
+
+      if (!result.success) {
+        console.error('Failed to merge splines:', result.error);
+        return;
+      }
+
+      setRiverGraph(result.graph);
     },
     [riverGraph]
   );

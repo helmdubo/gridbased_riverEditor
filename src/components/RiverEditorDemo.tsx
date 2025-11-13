@@ -9,7 +9,9 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useRiverGraphV2 } from '@hooks/useRiverGraphV2';
 import { useRiverRendererV2 } from '@hooks/useRiverRendererV2';
 import { useInteractionLogger } from '@hooks/useInteractionLogger';
+import { useActionLog } from '@hooks/useActionLog';
 import { RiverOverlay } from './RiverEditor/RiverOverlay';
+import { ActionLogPanel } from './ActionLog/ActionLogPanel';
 import { DEFAULT_GRID_SIZE, DEFAULT_MAIN_RIVERBED_WIDTH, DEFAULT_RIVER_TYPE, SNAP_DISTANCE, SPLINE_SNAP_DISTANCE } from '@domain/constants';
 import type { RiverType } from '@domain/models/types';
 import GraphService from '@services/GraphService';
@@ -91,6 +93,9 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
 
   // Interaction logger for debugging
   const logger = useInteractionLogger(true);
+
+  // Action log panel state
+  const actionLog = useActionLog(false);
 
   const computeWidthPx = useCallback(
     (spline: Spline | null | undefined) => {
@@ -855,21 +860,39 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
             </ul>
           </div>
 
-          <button
-            onClick={handleCreateNewRiver}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: '#059669',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '13px',
-              fontWeight: 'bold',
-            }}
-          >
-            🆕 New River
-          </button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={handleCreateNewRiver}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#059669',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '13px',
+                fontWeight: 'bold',
+              }}
+            >
+              🆕 New River
+            </button>
+
+            <button
+              onClick={actionLog.toggle}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: actionLog.isOpen ? '#dc2626' : '#0e639c',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '13px',
+                fontWeight: 'bold',
+              }}
+            >
+              {actionLog.isOpen ? '❌ Close' : '📋'} Echo Log
+            </button>
+          </div>
         </div>
 
         <div style={{
@@ -1007,6 +1030,13 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
           onTributaryPointDoubleClick={handleTributaryPointDoubleClick}
         />
       </div>
+
+      {/* Action Log Panel */}
+      <ActionLogPanel
+        isOpen={actionLog.isOpen}
+        onClose={actionLog.close}
+        autoScroll={true}
+      />
     </div>
   );
 };
