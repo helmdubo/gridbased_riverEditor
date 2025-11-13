@@ -8,12 +8,16 @@ export interface Point {
   y: number;
 }
 
-/** River point with unique identifier */
+/**
+ * @deprecated Legacy model - use RiverGraphV2 from @/core/graph/types
+ */
 export interface RiverPoint extends Point {
   id: string;
 }
 
-/** Tributary configuration */
+/**
+ * @deprecated Legacy model - use RiverGraphV2 from @/core/graph/types
+ */
 export interface Tributary {
   id: string;
   parentPointId: string | null;  // null if detached
@@ -26,13 +30,17 @@ export interface Tributary {
   widthKind?: 'px' | 'relative'; // Underlying width specification kind
 }
 
-/** Complete river graph structure */
+/**
+ * @deprecated Legacy model - use RiverGraphV2 from @/core/graph/types
+ */
 export interface RiverGraph {
   mainRiver: RiverPoint[];
   tributaries: Map<string, Tributary>;
 }
 
-/** Curve cache for optimized rendering */
+/**
+ * @deprecated Use GraphCache from @/core/geometry/cache
+ */
 export interface CurveCache {
   points: Point[];
   tangents: { vx: number; vy: number }[];
@@ -42,14 +50,18 @@ export interface CurveCache {
   arcLen: number[];      // Cumulative arc length at each point
 }
 
-/** Cached curve with metadata */
+/**
+ * @deprecated Not used - legacy type
+ */
 export interface CurveCacheEntry {
   cache: CurveCache;
   width: number;
   isMain: boolean;
 }
 
-/** Curve data for rendering */
+/**
+ * @deprecated Use CurveData from @/services/RenderServiceV2
+ */
 export interface CurveData {
   curve: Point[];
   width: number;
@@ -83,7 +95,9 @@ export interface InsertPointPreview {
   point: Point;
 }
 
-/** Dragging state for tributary */
+/**
+ * @deprecated Legacy UI state - will be removed with RiverOverlay migration
+ */
 export interface DraggingTributaryInfo {
   id: string;
   pointId: string;

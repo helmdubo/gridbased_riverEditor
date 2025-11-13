@@ -36,13 +36,14 @@ export interface RenderOptionsV2 {
 }
 
 /**
- * Curve data for rendering (same as legacy for compatibility)
+ * Curve data for rendering (updated to use flowSign)
  */
 export interface CurveData {
   curve: Point[];
   width: number;
   id: string;
   isMain: boolean;
+  flowSign: 1 | -1;  // Flow direction: 1 = downstream, -1 = reversed
 }
 
 /**
@@ -129,6 +130,7 @@ export class RenderServiceV2 {
         width: widthPx,
         id: splineId,
         isMain,
+        flowSign: spline.flowSign,  // Use explicit flow direction from spline
       });
     }
 
