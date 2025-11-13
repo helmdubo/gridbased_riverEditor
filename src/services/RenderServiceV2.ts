@@ -70,8 +70,8 @@ function resolveSplineWidthPx(
   visited.add(spline.id);
 
   // Direct pixel width
-  if (spline.width.kind === 'px') {
-    return spline.width.value;
+  if (spline.attributes.width.kind === 'px') {
+    return spline.attributes.width.value;
   }
 
   // Relative width - resolve parent
@@ -79,12 +79,12 @@ function resolveSplineWidthPx(
     const parent = graph.splines[spline.parentId];
     if (parent) {
       const parentWidth = resolveSplineWidthPx(graph, parent, visited);
-      return (spline.width.value / 100) * parentWidth;
+      return (spline.attributes.width.value / 100) * parentWidth;
     }
   }
 
   // No parent - use default base width
-  return (spline.width.value / 100) * DEFAULT_MAIN_RIVERBED_WIDTH;
+  return (spline.attributes.width.value / 100) * DEFAULT_MAIN_RIVERBED_WIDTH;
 }
 
 export class RenderServiceV2 {
@@ -105,9 +105,6 @@ export class RenderServiceV2 {
   ): CurveData[] {
     const allCurves: CurveData[] = [];
 
-    // Get main spline if exists
-    const mainSplineId = graph.mainSplineId;
-
     for (const [splineId, spline] of Object.entries(graph.splines)) {
       const edgeCache = cache[splineId];
       if (!edgeCache || edgeCache.curvePoints.length === 0) {
@@ -115,7 +112,7 @@ export class RenderServiceV2 {
       }
 
       // Determine if this is the main river
-      const isMain = mainSplineId === splineId;
+      const isMain = spline.isMain;
 
       // Resolve width to pixels
       let widthPx: number;
@@ -427,9 +424,8 @@ export class RenderServiceV2 {
     mainRiverbedWidth: number,
     options: RenderOptionsV2
   ): void {
-    const mainSplineId = graph.mainSplineId;
-    const mainSpline = mainSplineId ? graph.splines[mainSplineId] : null;
-    const mainCache = mainSplineId ? cache[mainSplineId] : null;
+    const mainSpline = Object.values(graph.splines).find((spline) => spline.isMain) || null;
+    const mainCache = mainSpline ? cache[mainSpline.id] : null;
 
     // Draw debug zones for junctions
     if (options.showDebugZones && mainSpline) {
@@ -473,10 +469,10 @@ export class RenderServiceV2 {
         continue;
       }
 
-      const isMain = splineId === mainSplineId;
+      const isMain = spline.isMain;
       const isActive = options.activeSplineId === splineId;
-      const isIndependent = spline.kind === 'river' && !spline.parentId;
-      const isDetached = spline.kind === 'tributary' && spline.parentId === null;
+      const isIndependent = spline.isIndependent;
+      const isDetached = spline.isDetached;
 
       // Determine stroke color
       const strokeColor = (() => {
