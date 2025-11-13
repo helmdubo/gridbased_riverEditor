@@ -214,6 +214,7 @@ export function getMergeSurvivor(
  * - One node must be source, other must be mouth (end-to-start connection)
  * - Must be in different splines
  * - At least one spline should be the active/main spline
+ * - Must NOT be in parent-child relationship (prevents cycles)
  *
  * @param graph - River graph
  * @param draggedNodeId - Node being dragged (should be source/mouth)
@@ -241,13 +242,26 @@ export function canMergeSplines(
   }
 
   const [draggedSplineId, draggedSpline] = draggedEntry;
-  const [targetSplineId] = targetEntry;
+  const [targetSplineId, targetSpline] = targetEntry;
 
   if (draggedSplineId === targetSplineId) {
     return false;
   }
 
   if (draggedSpline.children && draggedSpline.children.length > 0) {
+    return false;
+  }
+
+  // CRITICAL: Prevent cycles - forbid merge between parent and child splines
+  // Example: River A has tributary B attached → B[source] cannot merge with A[mouth]
+  // This would create: A → junction → B → A[mouth], forming a cycle
+  if (draggedSpline.parentId === targetSplineId) {
+    // Dragged spline is a child of target spline
+    return false;
+  }
+
+  if (targetSpline.parentId === draggedSplineId) {
+    // Target spline is a child of dragged spline
     return false;
   }
 

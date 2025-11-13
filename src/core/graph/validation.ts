@@ -247,6 +247,30 @@ export function isValidGraph(graph: RiverGraphV2): ValidationResult {
     }
   }
 
+  // CRITICAL: Validate no cycles in parent-child hierarchy
+  // Walk up parent chain from each tributary - must not loop back to itself
+  for (const spline of Object.values(graph.splines)) {
+    if (spline.parentId === null) continue;
+
+    const visited = new Set<string>();
+    let currentId: string | null = spline.id;
+
+    while (currentId !== null) {
+      if (visited.has(currentId)) {
+        return {
+          valid: false,
+          error: `Cycle detected: spline ${spline.id} has circular parent chain`,
+        };
+      }
+
+      visited.add(currentId);
+      const current = graph.splines[currentId];
+      if (!current) break;
+
+      currentId = current.parentId;
+    }
+  }
+
   return { valid: true };
 }
 
