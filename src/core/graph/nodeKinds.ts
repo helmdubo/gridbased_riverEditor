@@ -1,33 +1,13 @@
 /**
  * Node kind classification and priority system
  *
- * Defines vertex types (Source, Mouth, Junction, Mid) and their merge priorities.
+ * Defines vertex types (Source, Mouth, Junction, Inner) and their merge priorities.
  * Higher priority nodes "absorb" lower priority ones during merge operations.
  *
  * @module core/graph/nodeKinds
  */
 
-import type { RiverGraphV2, NodeId, SplineId } from './types';
-import GraphService from '@services/GraphService';
-
-/**
- * Node kind based on topology
- *
- * - Source: First node in a spline (upstream end)
- * - Mouth: Last node in a spline (downstream end)
- * - Junction: Node with child tributaries attached
- * - Mid: Any other node in the spline
- *
- * @ue_equivalent
- * UENUM(BlueprintType)
- * enum class ERiverNodeKind : uint8 {
- *   Source,
- *   Mouth,
- *   Junction,
- *   Mid
- * };
- */
-export type NodeKind = 'source' | 'mouth' | 'junction' | 'mid';
+import type { RiverGraphV2, NodeId, NodeKind, SplineId } from './types';
 
 /**
  * Priority levels for merge operations
@@ -40,17 +20,23 @@ export type NodeKind = 'source' | 'mouth' | 'junction' | 'mid';
  * Priority hierarchy (high to low):
  * 1. Junction (priority 3) - cannot merge with junction
  * 2. Source/Mouth (priority 2) - cannot merge with same kind
- * 3. Mid (priority 1) - merges with everything
+ * 3. Inner (priority 1) - merges with everything
  */
 const NODE_KIND_PRIORITY: Record<NodeKind, number> = {
   junction: 3,
   source: 2,
   mouth: 2,
-  mid: 1,
+  inner: 1,
 };
 
+function findSplinesContainingNode(graph: RiverGraphV2, nodeId: NodeId) {
+  return Object.entries(graph.splines).filter(([, spline]) =>
+    spline.nodeIds.includes(nodeId as string)
+  );
+}
+
 /**
- * Determine node kind based on topology
+ * Derives node kind based on current topology
  *
  * @param graph - River graph
  * @param nodeId - Node to classify
@@ -58,39 +44,47 @@ const NODE_KIND_PRIORITY: Record<NodeKind, number> = {
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
- * static ERiverNodeKind GetNodeKind(const FRiverGraph& Graph, FGuid NodeId);
+ * static ERiverNodeKind DeriveNodeKind(const FRiverGraph& Graph, FGuid NodeId);
  */
-export function getNodeKind(graph: RiverGraphV2, nodeId: NodeId): NodeKind {
-  // Check if junction (has children tributaries)
-  if (GraphService.isJunctionNode(graph, nodeId)) {
+export function computeNodeKind(graph: RiverGraphV2, nodeId: NodeId): NodeKind {
+  const node = graph.nodes[nodeId];
+  if (!node) {
+    return 'inner';
+  }
+
+  const containingSplines = findSplinesContainingNode(graph, nodeId);
+
+  if (containingSplines.length === 0) {
+    return 'inner';
+  }
+
+  if (containingSplines.length > 1) {
     return 'junction';
   }
 
-  // Find which spline contains this node
-  const splineEntry = Object.entries(graph.splines).find(([, spline]) =>
-    spline.nodeIds.includes(nodeId as string)
-  );
-
-  if (!splineEntry) {
-    // Orphan node (shouldn't happen in valid graph)
-    return 'mid';
-  }
-
-  const [, spline] = splineEntry;
+  const [, spline] = containingSplines[0];
   const nodeIndex = spline.nodeIds.indexOf(nodeId as string);
 
-  // Check if source (first node)
-  if (nodeIndex === 0) {
+  if (nodeIndex <= 0) {
     return 'source';
   }
 
-  // Check if mouth (last node)
   if (nodeIndex === spline.nodeIds.length - 1) {
     return 'mouth';
   }
 
-  // Otherwise it's a mid node
-  return 'mid';
+  return 'inner';
+}
+
+/**
+ * Gets stored node kind from the graph (falls back to derived value for robustness)
+ */
+export function getNodeKind(graph: RiverGraphV2, nodeId: NodeId): NodeKind {
+  const node = graph.nodes[nodeId];
+  if (!node) {
+    return 'inner';
+  }
+  return node.kind ?? computeNodeKind(graph, nodeId);
 }
 
 /**
@@ -114,7 +108,7 @@ export function getNodePriority(graph: RiverGraphV2, nodeId: NodeId): number {
  *
  * Merge rules:
  * - Must be in the same spline
- * - Mid → anything: allowed (Mid is absorbed)
+ * - Inner → anything: allowed (Inner is absorbed)
  * - Junction → Junction: forbidden
  * - Source → Source: forbidden
  * - Mouth → Mouth: forbidden
@@ -135,27 +129,20 @@ export function canMergeNodes(
   draggedNodeId: NodeId,
   targetNodeId: NodeId
 ): boolean {
-  // Cannot merge node with itself
   if (draggedNodeId === targetNodeId) {
     return false;
   }
 
-  // Find splines containing each node
-  const draggedSplineEntry = Object.entries(graph.splines).find(([, spline]) =>
-    spline.nodeIds.includes(draggedNodeId as string)
-  );
-  const targetSplineEntry = Object.entries(graph.splines).find(([, spline]) =>
-    spline.nodeIds.includes(targetNodeId as string)
-  );
+  const draggedEntry = findSplinesContainingNode(graph, draggedNodeId)[0];
+  const targetEntry = findSplinesContainingNode(graph, targetNodeId)[0];
 
-  if (!draggedSplineEntry || !targetSplineEntry) {
+  if (!draggedEntry || !targetEntry) {
     return false;
   }
 
-  const [draggedSplineId] = draggedSplineEntry;
-  const [targetSplineId] = targetSplineEntry;
+  const [draggedSplineId] = draggedEntry;
+  const [targetSplineId] = targetEntry;
 
-  // Must be in same spline
   if (draggedSplineId !== targetSplineId) {
     return false;
   }
@@ -163,32 +150,22 @@ export function canMergeNodes(
   const draggedKind = getNodeKind(graph, draggedNodeId);
   const targetKind = getNodeKind(graph, targetNodeId);
 
-  // Mid can always be absorbed
-  if (draggedKind === 'mid') {
+  if (draggedKind === 'inner' || targetKind === 'inner') {
     return true;
   }
 
-  // Target Mid can absorb anything (but dragged takes priority if higher)
-  if (targetKind === 'mid') {
-    return true;
-  }
-
-  // Junction → Junction: forbidden
   if (draggedKind === 'junction' && targetKind === 'junction') {
     return false;
   }
 
-  // Source → Source: forbidden
   if (draggedKind === 'source' && targetKind === 'source') {
     return false;
   }
 
-  // Mouth → Mouth: forbidden
   if (draggedKind === 'mouth' && targetKind === 'mouth') {
     return false;
   }
 
-  // Source ↔ Mouth: forbidden (would collapse entire spline)
   if (
     (draggedKind === 'source' && targetKind === 'mouth') ||
     (draggedKind === 'mouth' && targetKind === 'source')
@@ -196,7 +173,6 @@ export function canMergeNodes(
     return false;
   }
 
-  // All other combinations allowed
   return true;
 }
 
@@ -224,89 +200,11 @@ export function getMergeSurvivor(
   const draggedPriority = getNodePriority(graph, draggedNodeId);
   const targetPriority = getNodePriority(graph, targetNodeId);
 
-  // Higher priority wins
   if (draggedPriority > targetPriority) {
     return draggedNodeId;
   }
 
-  // Target wins on equal or higher priority
   return targetNodeId;
-}
-
-/**
- * Check if a spline can be attached as tributary to another spline
- *
- * Rules:
- * - Dragged spline must not have children (no nested tributaries)
- * - Dragged node must be source or mouth (endpoint)
- * - Target must be in a different spline
- * - Target must be Mid point (default point, not source/mouth)
- * - Target must NOT already be a junction (one tributary per node)
- *
- * @param graph - River graph
- * @param draggedNodeId - Node being dragged (must be source/mouth)
- * @param targetNodeId - Target node for attachment (must be mid point)
- * @returns True if attachment is allowed
- *
- * @ue_equivalent
- * UFUNCTION(BlueprintCallable)
- * static bool CanAttachAsTributary(const FRiverGraph& Graph, FGuid DraggedNode, FGuid TargetNode);
- */
-export function canAttachAsTributary(
-  graph: RiverGraphV2,
-  draggedNodeId: NodeId,
-  targetNodeId: NodeId
-): boolean {
-  // Cannot attach node to itself
-  if (draggedNodeId === targetNodeId) {
-    return false;
-  }
-
-  // Find splines containing each node
-  const draggedSplineEntry = Object.entries(graph.splines).find(([, spline]) =>
-    spline.nodeIds.includes(draggedNodeId as string)
-  );
-  const targetSplineEntry = Object.entries(graph.splines).find(([, spline]) =>
-    spline.nodeIds.includes(targetNodeId as string)
-  );
-
-  if (!draggedSplineEntry || !targetSplineEntry) {
-    return false;
-  }
-
-  const [draggedSplineId, draggedSpline] = draggedSplineEntry;
-  const [targetSplineId, targetSpline] = targetSplineEntry;
-
-  // Must be different splines
-  if (draggedSplineId === targetSplineId) {
-    return false;
-  }
-
-  // Dragged spline must not have children
-  if (draggedSpline.children && draggedSpline.children.length > 0) {
-    return false;
-  }
-
-  // Dragged node must be source or mouth (endpoint)
-  const draggedKind = getNodeKind(graph, draggedNodeId);
-  if (draggedKind !== 'source' && draggedKind !== 'mouth') {
-    return false;
-  }
-
-  // Get target node kind
-  const targetKind = getNodeKind(graph, targetNodeId);
-
-  // Target must NOT already be a junction (one tributary per node)
-  if (targetKind === 'junction') {
-    return false;
-  }
-
-  // Target must be Mid point (not source/mouth - only mid points can become junctions)
-  if (targetKind !== 'mid') {
-    return false;
-  }
-
-  return true;
 }
 
 /**
@@ -331,36 +229,31 @@ export function canMergeSplines(
   draggedNodeId: NodeId,
   targetNodeId: NodeId
 ): boolean {
-  // Cannot merge node with itself
   if (draggedNodeId === targetNodeId) {
     return false;
   }
 
-  // Find splines containing each node
-  const draggedSplineEntry = Object.entries(graph.splines).find(([, spline]) =>
-    spline.nodeIds.includes(draggedNodeId as string)
-  );
-  const targetSplineEntry = Object.entries(graph.splines).find(([, spline]) =>
-    spline.nodeIds.includes(targetNodeId as string)
-  );
+  const draggedEntry = findSplinesContainingNode(graph, draggedNodeId)[0];
+  const targetEntry = findSplinesContainingNode(graph, targetNodeId)[0];
 
-  if (!draggedSplineEntry || !targetSplineEntry) {
+  if (!draggedEntry || !targetEntry) {
     return false;
   }
 
-  const [draggedSplineId, draggedSpline] = draggedSplineEntry;
-  const [targetSplineId, targetSpline] = targetSplineEntry;
+  const [draggedSplineId, draggedSpline] = draggedEntry;
+  const [targetSplineId] = targetEntry;
 
-  // Must be different splines
   if (draggedSplineId === targetSplineId) {
     return false;
   }
 
-  // Get node kinds
+  if (draggedSpline.children && draggedSpline.children.length > 0) {
+    return false;
+  }
+
   const draggedKind = getNodeKind(graph, draggedNodeId);
   const targetKind = getNodeKind(graph, targetNodeId);
 
-  // One must be source, other must be mouth (end-to-start connection)
   const isValidConnection =
     (draggedKind === 'mouth' && targetKind === 'source') ||
     (draggedKind === 'source' && targetKind === 'mouth');
@@ -369,7 +262,79 @@ export function canMergeSplines(
     return false;
   }
 
-  // Both must be endpoints (already checked above implicitly)
+  return true;
+}
+
+/**
+ * Checks whether a dragged spline endpoint can attach as a tributary to the target node
+ *
+ * Conditions:
+ * - Nodes must belong to different splines
+ * - Dragged spline must be an independent river without children or parent
+ * - Dragged node must be an endpoint (source or mouth)
+ * - Target spline must be an independent river
+ * - Target node must not be the source node and must not already be a junction
+ */
+export function canAttachAsTributary(
+  graph: RiverGraphV2,
+  draggedNodeId: NodeId,
+  targetNodeId: NodeId
+): boolean {
+  if (draggedNodeId === targetNodeId) {
+    return false;
+  }
+
+  const draggedEntry = findSplinesContainingNode(graph, draggedNodeId)[0];
+  const targetEntry = findSplinesContainingNode(graph, targetNodeId)[0];
+
+  if (!draggedEntry || !targetEntry) {
+    return false;
+  }
+
+  const [draggedSplineId, draggedSpline] = draggedEntry;
+  const [targetSplineId, targetSpline] = targetEntry;
+
+  if (draggedSplineId === targetSplineId) {
+    return false;
+  }
+
+  if (draggedSpline.children.length > 0) {
+    return false;
+  }
+
+  if (draggedSpline.parentId !== null) {
+    return false;
+  }
+
+  if (draggedSpline.kind !== 'river') {
+    return false;
+  }
+
+  const draggedIndex = draggedSpline.nodeIds.indexOf(draggedNodeId as string);
+  if (draggedIndex === -1) {
+    return false;
+  }
+
+  const draggedIsEndpoint =
+    draggedIndex === 0 || draggedIndex === draggedSpline.nodeIds.length - 1;
+  if (!draggedIsEndpoint) {
+    return false;
+  }
+
+  if (targetSpline.parentId !== null) {
+    return false;
+  }
+
+  const targetIndex = targetSpline.nodeIds.indexOf(targetNodeId as string);
+  if (targetIndex < 1) {
+    return false;
+  }
+
+  const targetNode = graph.nodes[targetNodeId];
+  if (targetNode?.kind === 'junction') {
+    return false;
+  }
+
   return true;
 }
 
@@ -381,8 +346,6 @@ export function canMergeSplines(
  * @returns Spline ID or null if not found
  */
 export function getNodeSplineId(graph: RiverGraphV2, nodeId: NodeId): SplineId | null {
-  const entry = Object.entries(graph.splines).find(([, spline]) =>
-    spline.nodeIds.includes(nodeId as string)
-  );
+  const entry = findSplinesContainingNode(graph, nodeId)[0];
   return entry ? (entry[0] as SplineId) : null;
 }

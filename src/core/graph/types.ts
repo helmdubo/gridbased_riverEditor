@@ -46,19 +46,40 @@ export interface Width {
 }
 
 /**
- * Graph node representing a point in 2D space
+ * River node role within the topological graph
+ *
+ * - `source`: upstream endpoint of a spline
+ * - `mouth`: downstream endpoint of a spline
+ * - `junction`: shared node between two or more splines
+ * - `inner`: interior control point on a spline (default)
+ *
+ * @ue_equivalent
+ * UENUM(BlueprintType)
+ * enum class ERiverNodeKind : uint8 {
+ *   Source,
+ *   Mouth,
+ *   Junction,
+ *   Inner
+ * };
+ */
+export type NodeKind = 'source' | 'mouth' | 'junction' | 'inner';
+
+/**
+ * Graph node representing a point in 2D space and its topological role
  *
  * @ue_equivalent
  * USTRUCT(BlueprintType)
  * struct FRiverNode {
  *   UPROPERTY() FGuid Id;
  *   UPROPERTY() FVector2D Position; // x, y
+ *   UPROPERTY() ERiverNodeKind Kind;
  * };
  */
 export interface Node {
   id: NodeId;
   x: number;
   y: number;
+  kind: NodeKind;
 }
 
 /**
