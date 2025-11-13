@@ -46,7 +46,12 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
             makeWidthPx(newSplineSession.widthPx)
           );
 
-          setRiverGraph(graphWithSpline);
+          // If mainSplineId is null, this new river becomes the main one
+          const finalGraph = graphWithSpline.mainSplineId === null
+            ? { ...graphWithSpline, mainSplineId: splineId }
+            : graphWithSpline;
+
+          setRiverGraph(finalGraph);
           setActiveSplineId(splineId);
           setSelectedNodeId(nodeId);
           setNewSplineSession({ splineId, widthPx: newSplineSession.widthPx });
@@ -67,20 +72,9 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
         return;
       }
 
-      // Case 1: No main river exists yet - create first node
-      if (!GraphService.hasMainRiver(riverGraph)) {
-        console.log('🆕 Creating first node and main river');
-        const { graph: graphWithNode, nodeId } = GraphService.addNode(riverGraph, x, y);
-        const { graph: finalGraph, splineId } = GraphService.createMainRiver(
-          graphWithNode,
-          [nodeId],
-          60 // Default main river width
-        );
-
-        console.log('✅ First node created:', { nodeId, splineId });
-        setRiverGraph(finalGraph);
-        setActiveSplineId(splineId);
-        setSelectedNodeId(nodeId);
+      // Case 1: No river exists yet - cannot add points without a river
+      if (!GraphService.hasMainRiver(riverGraph) && !activeSplineId) {
+        console.warn('🚫 No river exists - use "New River" button to create one');
         return;
       }
 
@@ -283,7 +277,18 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
    */
   const deleteNode = useCallback(
     (nodeId: NodeId) => {
-      const newGraph = GraphService.deleteNode(riverGraph, nodeId);
+      let newGraph = GraphService.deleteNode(riverGraph, nodeId);
+
+      // If mainSplineId was deleted, find another independent river to be main
+      if (newGraph.mainSplineId === null) {
+        const independentRivers = Object.values(newGraph.splines).filter(
+          (s) => s.kind === 'river' && !s.parentId
+        );
+        if (independentRivers.length > 0) {
+          newGraph = { ...newGraph, mainSplineId: independentRivers[0].id };
+        }
+      }
+
       setRiverGraph(newGraph);
 
       if (selectedNodeId === nodeId) {
@@ -311,7 +316,18 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
    */
   const deleteSpline = useCallback(
     (splineId: SplineId) => {
-      const newGraph = GraphService.deleteSpline(riverGraph, splineId);
+      let newGraph = GraphService.deleteSpline(riverGraph, splineId);
+
+      // If mainSplineId was deleted, find another independent river to be main
+      if (newGraph.mainSplineId === null) {
+        const independentRivers = Object.values(newGraph.splines).filter(
+          (s) => s.kind === 'river' && !s.parentId
+        );
+        if (independentRivers.length > 0) {
+          newGraph = { ...newGraph, mainSplineId: independentRivers[0].id };
+        }
+      }
+
       setRiverGraph(newGraph);
 
       if (activeSplineId === splineId) {
@@ -427,7 +443,26 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
    */
   const attachSplineAsTributary = useCallback(
     (draggedNodeId: NodeId, targetNodeId: NodeId) => {
-      const newGraph = GraphService.attachSplineAsTributary(riverGraph, draggedNodeId, targetNodeId);
+      // Find which splines are involved
+      const draggedSplineEntry = Object.entries(riverGraph.splines).find(([, spline]) =>
+        spline.nodeIds.includes(draggedNodeId as string)
+      );
+      const targetSplineEntry = Object.entries(riverGraph.splines).find(([, spline]) =>
+        spline.nodeIds.includes(targetNodeId as string)
+      );
+
+      let newGraph = GraphService.attachSplineAsTributary(riverGraph, draggedNodeId, targetNodeId);
+
+      // If mainSplineId was attached as tributary, update mainSplineId to target spline
+      if (draggedSplineEntry && targetSplineEntry) {
+        const [draggedSplineId] = draggedSplineEntry;
+        const [targetSplineId] = targetSplineEntry;
+
+        if (newGraph.mainSplineId === draggedSplineId) {
+          newGraph = { ...newGraph, mainSplineId: targetSplineId as SplineId };
+        }
+      }
+
       setRiverGraph(newGraph);
 
       // Update selected node to target (new junction)

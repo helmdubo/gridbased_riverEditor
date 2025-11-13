@@ -8,6 +8,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useRiverGraphV2 } from '@hooks/useRiverGraphV2';
 import { useRiverRendererV2 } from '@hooks/useRiverRendererV2';
+import { useInteractionLogger } from '@hooks/useInteractionLogger';
 import { RiverOverlay } from './RiverEditor/RiverOverlay';
 import { DEFAULT_GRID_SIZE, DEFAULT_MAIN_RIVERBED_WIDTH, DEFAULT_RIVER_TYPE, SNAP_DISTANCE, SPLINE_SNAP_DISTANCE } from '@domain/constants';
 import type { RiverType } from '@domain/models/types';
@@ -87,6 +88,9 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     mergeSplines,
   } = useRiverGraphV2();
 
+  // Interaction logger for debugging
+  const logger = useInteractionLogger(true);
+
   const computeWidthPx = useCallback(
     (spline: Spline | null | undefined) => {
       if (!spline) {
@@ -114,8 +118,18 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
 
   // Create new independent river
   const handleCreateNewRiver = () => {
-    console.log('🆕 Creating new independent river');
+    logger.log('BUTTON_NEW_RIVER', {
+      currentMainSplineId: riverGraph.mainSplineId,
+      totalSplines: Object.keys(riverGraph.splines).length,
+      activeSplineId,
+      widthPx: mainRiverWidthPx,
+    });
+
     beginNewSpline(mainRiverWidthPx);
+
+    logger.log('NEW_RIVER_CREATED', {
+      totalSplines: Object.keys(riverGraph.splines).length,
+    });
   };
 
   useEffect(() => {
@@ -308,30 +322,39 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     // Use snap coordinates if available
     let finalX = x;
     let finalY = y;
+    let snapType = 'none';
 
     if (snapTargetNode) {
       finalX = snapTargetNode.node.x;
       finalY = snapTargetNode.node.y;
-      console.log('📍 Snapping to node:', snapTargetNode.nodeId);
+      snapType = 'node';
     } else if (splineSnapInfo) {
       finalX = splineSnapInfo.point.x;
       finalY = splineSnapInfo.point.y;
-      console.log('📍 Snapping to spline:', splineSnapInfo.splineId);
+      snapType = 'spline';
     }
 
-    console.log('🖱️ Stage click:', { x: finalX, y: finalY });
+    logger.log('STAGE_CLICK', {
+      originalPos: { x: Math.round(x), y: Math.round(y) },
+      finalPos: { x: Math.round(finalX), y: Math.round(finalY) },
+      snapType,
+      hasMainRiver: !!riverGraph.mainSplineId,
+      activeSplineId,
+      totalSplines: Object.keys(riverGraph.splines).length,
+      totalNodes: Object.keys(riverGraph.nodes).length,
+    });
+
     addPointToActiveSpline(finalX, finalY, newTributaryWidthPercent);
-    console.log(
-      '📊 Graph updated - nodes:',
-      Object.keys(riverGraph.nodes).length,
-      'splines:',
-      Object.keys(riverGraph.splines).length
-    );
+
+    logger.log('POINT_ADDED', {
+      totalSplines: Object.keys(riverGraph.splines).length,
+      totalNodes: Object.keys(riverGraph.nodes).length,
+    });
 
     // Clear snap highlights after adding point
     setSnapTargetNode(null);
     setSplineSnapInfo(null);
-  }, [addPointToActiveSpline, newTributaryWidthPercent, riverGraph, snapTargetNode, splineSnapInfo]);
+  }, [addPointToActiveSpline, newTributaryWidthPercent, riverGraph, snapTargetNode, splineSnapInfo, logger, activeSplineId]);
 
   // Handle canvas click (fallback)
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -343,25 +366,43 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   };
 
   const handleOverlayBackgroundClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    logger.log('CLICK_BACKGROUND', {
+      position: { x: Math.round(x), y: Math.round(y) },
+      wasDragging: wasDraggingRef.current,
+      hasMainRiver: !!riverGraph.mainSplineId,
+      activeSplineId,
+      selectedNodeId,
+      totalSplines: Object.keys(riverGraph.splines).length,
+    });
+
     // Don't create vertex if we just finished dragging
     if (wasDraggingRef.current) {
-      console.log('🚫 Ignoring click after drag');
+      logger.log('CLICK_IGNORED', { reason: 'just finished dragging' });
       return;
     }
 
-    const rect = e.currentTarget.getBoundingClientRect();
-    handleStageClick(e.clientX - rect.left, e.clientY - rect.top);
-  }, [handleStageClick]);
+    handleStageClick(x, y);
+  }, [handleStageClick, logger, riverGraph, activeSplineId, selectedNodeId]);
 
   // Node interaction handlers
   const handlePointMouseDown = useCallback((pointId: string) => {
-    console.log('🖱️ Point mouse down:', pointId);
     wasDraggingRef.current = false; // Reset flag when starting new interaction
     const nodeId = makeNodeId(pointId);
+
+    logger.log('POINT_MOUSE_DOWN', {
+      pointId,
+      nodeId,
+      activeSplineId,
+    });
+
     setDraggingPointId(nodeId);
     selectNode(nodeId);
     setActiveSpline('main');
-  }, [selectNode, setActiveSpline]);
+  }, [selectNode, setActiveSpline, logger, activeSplineId]);
 
   const handlePointClick = useCallback((e: React.MouseEvent, pointId: string) => {
     e.stopPropagation();
