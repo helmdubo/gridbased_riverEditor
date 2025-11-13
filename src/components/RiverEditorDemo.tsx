@@ -308,7 +308,8 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     deleteNode(makeNodeId(pointId));
   }, [deleteNode]);
 
-  const handleOverlayMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+  // P0 BUGFIX: Use PointerEvent for better capture support
+  const handleOverlayPointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -367,7 +368,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     }
   }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraphForOverlay, cols, rows, gridSize]);
 
-  const handleOverlayMouseUp = useCallback(() => {
+  const handleOverlayPointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     if (draggingPointId || draggingTributaryInfo) {
       console.log('✅ Drag complete');
       setDraggingPointId(null);
@@ -639,9 +640,9 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
           hoveredTributaryPointId={hoveredTributaryPointId}
           snapTargetPointId={null}
           insertPointPreview={null}
-          onMouseMove={handleOverlayMouseMove}
-          onMouseUp={handleOverlayMouseUp}
-          onMouseLeave={handleOverlayMouseLeave}
+          onPointerMove={handleOverlayPointerMove}
+          onPointerUp={handleOverlayPointerUp}
+          onPointerLeave={handleOverlayMouseLeave}
           onBackgroundClick={handleOverlayBackgroundClick}
           onPointMouseDown={handlePointMouseDown}
           onPointClick={handlePointClick}
