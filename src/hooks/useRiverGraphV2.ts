@@ -7,18 +7,35 @@
 
 import { useState, useCallback } from 'react';
 import type { RiverGraphV2, NodeId, SplineId, Spline } from '@/core/graph/types';
-import { makeWidthPx, makeWidthRelative } from '@/core/graph/types';
+import { makeWidthPx, makeWidthRelative, makeRiverAttributes } from '@/core/graph/types';
 import GraphService from '@services/GraphService';
 
 export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
   const [riverGraph, setRiverGraph] = useState<RiverGraphV2>(
     initialGraph || GraphService.createEmpty()
   );
-  const [activeSplineId, setActiveSplineId] = useState<SplineId | 'main' | null>(null);
+  const [activeSplineId, setActiveSplineId] = useState<SplineId | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<NodeId | null>(null);
   const [newSplineSession, setNewSplineSession] = useState<
     { splineId: SplineId | null; widthPx: number } | null
   >(null);
+
+  const ensureMainSpline = useCallback(
+    (graph: RiverGraphV2): RiverGraphV2 => {
+      const currentMain = GraphService.getMainSpline(graph);
+      if (currentMain) {
+        return graph;
+      }
+
+      const roots = GraphService.getRootSplines(graph);
+      if (roots.length > 0) {
+        return GraphService.setExclusiveMainSpline(graph, roots[0].id as SplineId);
+      }
+
+      return graph;
+    },
+    []
+  );
 
   /**
    * Adds a point to the active spline
@@ -39,17 +56,18 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
         if (newSplineSession.splineId === null) {
           console.log('🆕 Starting new independent spline');
           const { graph: graphWithNode, nodeId } = GraphService.addNode(riverGraph, x, y);
+          const attributes = makeRiverAttributes(makeWidthPx(newSplineSession.widthPx));
           const { graph: graphWithSpline, splineId } = GraphService.createSpline(
             graphWithNode,
             'river',
             [nodeId],
-            makeWidthPx(newSplineSession.widthPx)
+            attributes
           );
 
-          // If mainSplineId is null, this new river becomes the main one
-          const finalGraph = graphWithSpline.mainSplineId === null
-            ? { ...graphWithSpline, mainSplineId: splineId }
-            : graphWithSpline;
+          const hasMain = GraphService.getMainSpline(graphWithSpline);
+          const finalGraph = hasMain
+            ? graphWithSpline
+            : GraphService.setExclusiveMainSpline(graphWithSpline, splineId);
 
           setRiverGraph(finalGraph);
           setActiveSplineId(splineId);
@@ -73,7 +91,7 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
       }
 
       // Case 1: No river exists yet - cannot add points without a river
-      if (!GraphService.hasMainRiver(riverGraph) && !activeSplineId) {
+      if (!GraphService.hasIndependentRiver(riverGraph) && !activeSplineId) {
         console.warn('🚫 No river exists - use "New River" button to create one');
         return;
       }
@@ -81,14 +99,19 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
       const mainSpline = GraphService.getMainSpline(riverGraph);
       if (!mainSpline) return;
 
+      const resolvedActiveId = activeSplineId ?? mainSpline.id;
+      if (activeSplineId === null) {
+        setActiveSplineId(mainSpline.id);
+      }
+
       console.log('🔧 Main river exists, processing...', {
         selectedNodeId,
-        activeSplineId,
+        activeSplineId: resolvedActiveId,
         mainEdgeNodes: mainSpline.nodeIds.length,
       });
 
       // Case 2: Working with main river
-      if (activeSplineId === null || activeSplineId === 'main' || activeSplineId === mainSpline.id) {
+      if (resolvedActiveId === mainSpline.id) {
         if (selectedNodeId) {
           // Check if selected node is an endpoint (source or mouth)
           const selectedIndex = mainSpline.nodeIds.indexOf(selectedNodeId as string);
@@ -176,9 +199,9 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
         }
       } else {
         // Case 3: Working with secondary spline (tributary or independent river)
-        const activeSpline = GraphService.getSpline(riverGraph, activeSplineId);
+        const activeSpline = GraphService.getSpline(riverGraph, resolvedActiveId);
         if (!activeSpline) {
-          console.warn('⚠️ Active spline not found:', activeSplineId);
+          console.warn('⚠️ Active spline not found:', resolvedActiveId);
           return;
         }
 
@@ -194,7 +217,7 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
 
           if (isSource || selectedIndex === -1) {
             console.log('⬆️ Extending tributary upstream (away from junction)');
-            const result = GraphService.extendUpstream(riverGraph, activeSplineId, x, y);
+            const result = GraphService.extendUpstream(riverGraph, resolvedActiveId, x, y);
             setRiverGraph(result.graph);
             setSelectedNodeId(result.nodeId);
             return;
@@ -208,14 +231,14 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
 
         if (selectedNodeId && selectedIndex !== -1) {
           if (isSource) {
-            const result = GraphService.extendUpstream(riverGraph, activeSplineId, x, y);
+            const result = GraphService.extendUpstream(riverGraph, resolvedActiveId, x, y);
             setRiverGraph(result.graph);
             setSelectedNodeId(result.nodeId);
             return;
           }
 
           if (isMouth) {
-            const result = GraphService.extendDownstream(riverGraph, activeSplineId, x, y);
+            const result = GraphService.extendDownstream(riverGraph, resolvedActiveId, x, y);
             setRiverGraph(result.graph);
             setSelectedNodeId(result.nodeId);
             return;
@@ -225,7 +248,7 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
           if (canAttach.valid) {
             const result = GraphService.createTributaryFromJunction(
               riverGraph,
-              activeSplineId,
+              resolvedActiveId,
               selectedNodeId,
               x,
               y,
@@ -240,7 +263,7 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
           try {
             const result = GraphService.insertNodeAfter(
               riverGraph,
-              activeSplineId,
+              resolvedActiveId,
               selectedNodeId,
               x,
               y
@@ -253,7 +276,7 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
           }
         }
 
-        const result = GraphService.extendDownstream(riverGraph, activeSplineId, x, y);
+        const result = GraphService.extendDownstream(riverGraph, resolvedActiveId, x, y);
         setRiverGraph(result.graph);
         setSelectedNodeId(result.nodeId);
       }
@@ -278,16 +301,7 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
   const deleteNode = useCallback(
     (nodeId: NodeId) => {
       let newGraph = GraphService.deleteNode(riverGraph, nodeId);
-
-      // If mainSplineId was deleted, find another independent river to be main
-      if (newGraph.mainSplineId === null) {
-        const independentRivers = Object.values(newGraph.splines).filter(
-          (s) => s.kind === 'river' && !s.parentId
-        );
-        if (independentRivers.length > 0) {
-          newGraph = { ...newGraph, mainSplineId: independentRivers[0].id };
-        }
-      }
+      newGraph = ensureMainSpline(newGraph);
 
       setRiverGraph(newGraph);
 
@@ -295,20 +309,18 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
         setSelectedNodeId(null);
       }
 
-      if (activeSplineId === 'main') {
-        const nextMain = GraphService.getMainSpline(newGraph);
-        if (!nextMain) {
-          setActiveSplineId(null);
-        }
-      } else if (activeSplineId) {
+      if (activeSplineId) {
         const stillExists = GraphService.getSpline(newGraph, activeSplineId);
         if (!stillExists) {
           const nextMain = GraphService.getMainSpline(newGraph);
-          setActiveSplineId(nextMain ? nextMain.id : null);
+          setActiveSplineId(nextMain ? (nextMain.id as SplineId) : null);
         }
+      } else {
+        const nextMain = GraphService.getMainSpline(newGraph);
+        setActiveSplineId(nextMain ? (nextMain.id as SplineId) : null);
       }
     },
-    [riverGraph, selectedNodeId, activeSplineId]
+    [riverGraph, selectedNodeId, activeSplineId, ensureMainSpline]
   );
 
   /**
@@ -317,25 +329,16 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
   const deleteSpline = useCallback(
     (splineId: SplineId) => {
       let newGraph = GraphService.deleteSpline(riverGraph, splineId);
-
-      // If mainSplineId was deleted, find another independent river to be main
-      if (newGraph.mainSplineId === null) {
-        const independentRivers = Object.values(newGraph.splines).filter(
-          (s) => s.kind === 'river' && !s.parentId
-        );
-        if (independentRivers.length > 0) {
-          newGraph = { ...newGraph, mainSplineId: independentRivers[0].id };
-        }
-      }
+      newGraph = ensureMainSpline(newGraph);
 
       setRiverGraph(newGraph);
 
       if (activeSplineId === splineId) {
         const mainSpline = GraphService.getMainSpline(newGraph);
-        setActiveSplineId(mainSpline?.id || null);
+        setActiveSplineId(mainSpline ? (mainSpline.id as SplineId) : null);
       }
     },
-    [riverGraph, activeSplineId]
+    [riverGraph, activeSplineId, ensureMainSpline]
   );
 
   /**
@@ -453,22 +456,23 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
 
       let newGraph = GraphService.attachSplineAsTributary(riverGraph, draggedNodeId, targetNodeId);
 
-      // If mainSplineId was attached as tributary, update mainSplineId to target spline
       if (draggedSplineEntry && targetSplineEntry) {
-        const [draggedSplineId] = draggedSplineEntry;
+        const [, draggedSpline] = draggedSplineEntry;
         const [targetSplineId] = targetSplineEntry;
 
-        if (newGraph.mainSplineId === draggedSplineId) {
-          newGraph = { ...newGraph, mainSplineId: targetSplineId as SplineId };
+        if (draggedSpline.isMain) {
+          newGraph = GraphService.setExclusiveMainSpline(newGraph, targetSplineId as SplineId);
         }
       }
+
+      newGraph = ensureMainSpline(newGraph);
 
       setRiverGraph(newGraph);
 
       // Update selected node to target (new junction)
       setSelectedNodeId(targetNodeId);
     },
-    [riverGraph]
+    [riverGraph, ensureMainSpline]
   );
 
   /**
@@ -511,20 +515,25 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
   /**
    * Sets the active spline
    */
-  const setActiveSpline = useCallback((splineId: SplineId | 'main' | null) => {
-    setActiveSplineId(splineId);
-  }, []);
+  const setActiveSpline = useCallback(
+    (splineId: SplineId | null) => {
+      if (splineId) {
+        setActiveSplineId(splineId);
+        return;
+      }
+
+      const mainSpline = GraphService.getMainSpline(riverGraph);
+      setActiveSplineId(mainSpline ? (mainSpline.id as SplineId) : null);
+    },
+    [riverGraph]
+  );
 
   const resolveActiveSpline = useCallback((): Spline | null => {
-    if (activeSplineId === 'main') {
-      return GraphService.getMainSpline(riverGraph);
+    if (activeSplineId) {
+      return GraphService.getSpline(riverGraph, activeSplineId) ?? null;
     }
 
-    if (!activeSplineId) {
-      return null;
-    }
-
-    return GraphService.getSpline(riverGraph, activeSplineId) ?? null;
+    return GraphService.getMainSpline(riverGraph);
   }, [activeSplineId, riverGraph]);
 
   return {

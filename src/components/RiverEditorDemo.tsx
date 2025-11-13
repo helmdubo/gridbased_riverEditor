@@ -21,10 +21,11 @@ import { canMergeNodes, getMergeSurvivor, canAttachAsTributary, canMergeSplines 
 interface RiverEditorDemoProps {
   cols: number;
   rows: number;
+  gridSize?: number;
 }
 
-export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) => {
-  const gridSize = DEFAULT_GRID_SIZE;
+export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gridSize }) => {
+  const effectiveGridSize = gridSize ?? DEFAULT_GRID_SIZE;
   const [riverType, setRiverType] = useState<RiverType>(DEFAULT_RIVER_TYPE);
   const [showFlowMap, setShowFlowMap] = useState(false);
   const [showFlowArrows, setShowFlowArrows] = useState(false);
@@ -97,29 +98,37 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
         return DEFAULT_MAIN_RIVERBED_WIDTH;
       }
 
-      if (spline.width.kind === 'px') {
-        return spline.width.value;
+      const widthSpec = spline.attributes?.width ?? spline.width;
+
+      if (!widthSpec) {
+        return DEFAULT_MAIN_RIVERBED_WIDTH;
+      }
+
+      if (widthSpec.kind === 'px') {
+        return widthSpec.value;
       }
 
       if (spline.parentId) {
         const parent = GraphService.getSpline(riverGraph, spline.parentId);
-        if (parent && parent.width.kind === 'px' && parent.width.value > 0) {
-          return (spline.width.value / 100) * parent.width.value;
+        const parentWidth = parent?.attributes?.width ?? parent?.width;
+        if (parent && parentWidth && parentWidth.kind === 'px' && parentWidth.value > 0) {
+          return (widthSpec.value / 100) * parentWidth.value;
         }
       }
 
-      return (spline.width.value / 100) * DEFAULT_MAIN_RIVERBED_WIDTH;
+      return (widthSpec.value / 100) * DEFAULT_MAIN_RIVERBED_WIDTH;
     },
     [riverGraph]
   );
 
   const mainRiverWidthPx = Math.max(5, Math.round(computeWidthPx(mainSpline)));
+  const hasMainRiver = Boolean(mainSpline);
   const sliderDisabled = !activeSpline;
 
   // Create new independent river
   const handleCreateNewRiver = () => {
     logger.log('BUTTON_NEW_RIVER', {
-      currentMainSplineId: riverGraph.mainSplineId,
+      currentMainSplineId: mainSpline?.id ?? null,
       totalSplines: Object.keys(riverGraph.splines).length,
       activeSplineId,
       widthPx: mainRiverWidthPx,
@@ -144,12 +153,14 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     if (isTributary) {
       let percentValue: number | null = null;
 
-      if (activeSpline.width.kind === 'relative') {
-        percentValue = activeSpline.width.value;
+      const activeWidth = activeSpline.attributes?.width ?? activeSpline.width;
+      if (activeWidth?.kind === 'relative') {
+        percentValue = activeWidth.value;
       } else if (activeSpline.parentId) {
         const parent = GraphService.getSpline(riverGraph, activeSpline.parentId);
-        if (parent && parent.width.kind === 'px' && parent.width.value > 0) {
-          percentValue = (computeWidthPx(activeSpline) / parent.width.value) * 100;
+        const parentWidth = parent?.attributes?.width ?? parent?.width;
+        if (parent && parentWidth && parentWidth.kind === 'px' && parentWidth.value > 0) {
+          percentValue = (computeWidthPx(activeSpline) / parentWidth.value) * 100;
         }
       }
 
@@ -202,14 +213,13 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     if (!splineWithNode) return null;
 
     const nodeIndex = splineWithNode.nodeIds.indexOf(selectedNodeId as string);
-    const isSource = nodeIndex === 0;
-    const isMouth = nodeIndex === splineWithNode.nodeIds.length - 1;
     const isJunction = GraphService.isJunctionNode(riverGraph, selectedNodeId);
+    const node = riverGraph.nodes[selectedNodeId];
 
-    let nodeType = 'mid';
-    if (isSource) nodeType = 'source';
-    else if (isMouth) nodeType = 'mouth';
-    if (isJunction) nodeType += '+junction';
+    let nodeType: string = node?.kind ?? 'inner';
+    if (isJunction && nodeType !== 'junction') {
+      nodeType = `${nodeType}+junction`;
+    }
 
     return {
       spline: splineWithNode,
@@ -225,7 +235,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     mainRiverWidthPx,
     cols,
     rows,
-    gridSize,
+    effectiveGridSize,
     {
       baseSpeed: 1.0,
       curvWeight: 0.5,
@@ -237,14 +247,26 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   // TEMPORARY: Convert V2 graph to legacy format for RiverOverlay
   // TODO: Update RiverOverlay to work with RiverGraphV2 directly
   const legacyGraphForOverlay = React.useMemo(() => {
-    const mainRiver: Array<{ x: number; y: number; id: string }> = [];
-    const tributaries = new Map<string, any>();
+    type LegacyPoint = { x: number; y: number; id: string };
+    type LegacyTributary = {
+      id: string;
+      parentPointId: string | null;
+      points: LegacyPoint[];
+      widthPercent: number;
+      isDetached: boolean;
+      isIndependent: boolean;
+      resolvedWidthPx: number;
+      parentSplineId: string | null;
+      widthKind: 'px' | 'relative';
+    };
 
-    const mainSplineId = riverGraph.mainSplineId;
-    const mainSpline = mainSplineId ? riverGraph.splines[mainSplineId] : null;
+    const mainRiver: LegacyPoint[] = [];
+    const tributaries = new Map<string, LegacyTributary>();
 
-    if (mainSpline) {
-      for (const nodeId of mainSpline.nodeIds) {
+    const primarySpline = mainSpline ?? GraphService.getMainSpline(riverGraph);
+
+    if (primarySpline) {
+      for (const nodeId of primarySpline.nodeIds) {
         const node = riverGraph.nodes[nodeId];
         if (node) {
           mainRiver.push({ x: node.x, y: node.y, id: node.id });
@@ -253,9 +275,9 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     }
 
     for (const [splineId, spline] of Object.entries(riverGraph.splines)) {
-      if (splineId === mainSplineId) continue;
+      if (primarySpline && splineId === primarySpline.id) continue;
 
-      const points: Array<{ x: number; y: number; id: string }> = [];
+      const points: LegacyPoint[] = [];
       for (const nodeId of spline.nodeIds) {
         const node = riverGraph.nodes[nodeId];
         if (node) {
@@ -264,25 +286,33 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       }
 
       if (points.length > 0) {
-        const isIndependent = spline.kind === 'river' && !spline.parentId;
-        const isDetached = spline.kind === 'tributary' && spline.parentId === null;
+        const isIndependent = spline.isIndependent;
+        const isDetached = spline.isDetached;
+        const widthSpec = spline.attributes?.width ?? spline.width ?? {
+          kind: 'relative',
+          value: 50,
+        };
 
         tributaries.set(splineId, {
           id: splineId,
           parentPointId: spline.parentJunction,
           points,
-          widthPercent: spline.width.kind === 'relative' ? spline.width.value : 50,
+          widthPercent: widthSpec.kind === 'relative' ? widthSpec.value : 50,
           isDetached,
           isIndependent,
           resolvedWidthPx: computeWidthPx(spline),
           parentSplineId: spline.parentId,
-          widthKind: spline.width.kind,
+          widthKind: widthSpec.kind,
         });
       }
     }
 
     return { mainRiver, tributaries };
-  }, [riverGraph, computeWidthPx]);
+  }, [riverGraph, computeWidthPx, mainSpline]);
+
+  const overlayActiveSplineId = mainSpline && (!activeSplineId || activeSplineId === mainSpline.id)
+    ? 'main'
+    : activeSplineId ?? 'main';
 
   // Render on changes
   useEffect(() => {
@@ -293,13 +323,15 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       point: splineSnapInfo.point,
     } : null;
 
+    const activeRenderSplineId = activeSplineId ?? mainSpline?.id ?? null;
+
     render({
       showFlowMap,
       showFlowArrows,
       showDebugZones: false,
       arrowSpacing: 1,
       flowStrength: 1.0,
-      activeSplineId: activeSplineId ?? 'main',
+      activeSplineId: activeRenderSplineId,
       snapTargetPointId: snapTargetNode ? snapTargetNode.nodeId : null,
       splineSnapInfo: legacySplineSnap,
       hoveredSegment: null,
@@ -316,6 +348,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     activeSplineId,
     snapTargetNode,
     splineSnapInfo,
+    mainSpline,
   ]);
 
   const handleStageClick = useCallback((x: number, y: number) => {
@@ -338,7 +371,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       originalPos: { x: Math.round(x), y: Math.round(y) },
       finalPos: { x: Math.round(finalX), y: Math.round(finalY) },
       snapType,
-      hasMainRiver: !!riverGraph.mainSplineId,
+      hasMainRiver,
       activeSplineId,
       totalSplines: Object.keys(riverGraph.splines).length,
       totalNodes: Object.keys(riverGraph.nodes).length,
@@ -373,7 +406,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     logger.log('CLICK_BACKGROUND', {
       position: { x: Math.round(x), y: Math.round(y) },
       wasDragging: wasDraggingRef.current,
-      hasMainRiver: !!riverGraph.mainSplineId,
+      hasMainRiver,
       activeSplineId,
       selectedNodeId,
       totalSplines: Object.keys(riverGraph.splines).length,
@@ -401,14 +434,14 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
 
     setDraggingPointId(nodeId);
     selectNode(nodeId);
-    setActiveSpline('main');
+    setActiveSpline(null);
   }, [selectNode, setActiveSpline, logger, activeSplineId]);
 
   const handlePointClick = useCallback((e: React.MouseEvent, pointId: string) => {
     e.stopPropagation();
     console.log('🖱️ Point click:', pointId);
     selectNode(makeNodeId(pointId));
-    setActiveSpline('main');
+    setActiveSpline(null);
   }, [selectNode, setActiveSpline]);
 
   const handlePointDoubleClick = useCallback((e: React.MouseEvent, pointId: string) => {
@@ -477,16 +510,16 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     // Handle dragging main river point
     if (draggingPointId) {
       wasDraggingRef.current = true; // Mark that we're dragging
-      const newX = Math.max(0, Math.min(cols * gridSize, x));
-      const newY = Math.max(0, Math.min(rows * gridSize, y));
+      const newX = Math.max(0, Math.min(cols * effectiveGridSize, x));
+      const newY = Math.max(0, Math.min(rows * effectiveGridSize, y));
       moveNode(draggingPointId, newX, newY);
     }
 
     // Handle dragging tributary point
     if (draggingTributaryInfo) {
       wasDraggingRef.current = true; // Mark that we're dragging
-      const newX = Math.max(0, Math.min(cols * gridSize, x));
-      const newY = Math.max(0, Math.min(rows * gridSize, y));
+      const newX = Math.max(0, Math.min(cols * effectiveGridSize, x));
+      const newY = Math.max(0, Math.min(rows * effectiveGridSize, y));
       moveNode(makeNodeId(draggingTributaryInfo.pointId), newX, newY);
     }
 
@@ -504,7 +537,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
         );
 
         if (draggedSplineEntry) {
-          const [draggedSplineId, draggedSpline] = draggedSplineEntry;
+          const [, draggedSpline] = draggedSplineEntry;
 
           // Look for other nodes in the same spline within snap distance
           for (const nodeIdStr of draggedSpline.nodeIds) {
@@ -533,7 +566,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
 
         // Priority 2: Check for spline merge (end-to-end connection) across different splines
         if (!snapFound && actualDraggedId) {
-          for (const [splineId, spline] of Object.entries(riverGraph.splines)) {
+          for (const [, spline] of Object.entries(riverGraph.splines)) {
             for (const nodeIdStr of spline.nodeIds) {
               const nodeId = makeNodeId(nodeIdStr);
               if (nodeId === actualDraggedId) continue; // Skip self
@@ -606,9 +639,21 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       setSnapTargetNode(null);
       setSplineSnapInfo(null);
     }
-  }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraphForOverlay, cols, rows, gridSize, capturedPointerId, riverGraph, geometryCache, mainRiverWidthPx]);
+  }, [
+    draggingPointId,
+    draggingTributaryInfo,
+    moveNode,
+    legacyGraphForOverlay,
+    cols,
+    rows,
+    effectiveGridSize,
+    capturedPointerId,
+    riverGraph,
+    geometryCache,
+    mainRiverWidthPx,
+  ]);
 
-  const handleOverlayPointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
+  const handleOverlayPointerUp = useCallback((_e: React.PointerEvent<SVGSVGElement>) => {
     if (draggingPointId || draggingTributaryInfo) {
       console.log('✅ Drag complete');
 
@@ -843,7 +888,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
           <div style={{ marginLeft: '10px', marginTop: '5px' }}>
             <div>Total Nodes: <span style={{ color: '#fbbf24' }}>{Object.keys(riverGraph.nodes).length}</span></div>
             <div>Total Splines: <span style={{ color: '#fbbf24' }}>{Object.keys(riverGraph.splines).length}</span></div>
-            <div>Main River: <span style={{ color: '#fbbf24' }}>{riverGraph.mainSplineId ? 'Yes' : 'No'}</span></div>
+            <div>Main River: <span style={{ color: '#fbbf24' }}>{hasMainRiver ? 'Yes' : 'No'}</span></div>
           </div>
 
           {(() => {
@@ -857,7 +902,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
             }
 
             const spline = info.spline;
-            const isMainRiver = riverGraph.mainSplineId === spline.id;
+            const isMainRiver = spline.isMain;
 
             return (
               <div style={{ marginTop: '10px' }}>
@@ -874,7 +919,20 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
                     <div>ID: <span style={{ color: '#a855f7' }}>{spline.id.slice(0, 8)}...</span></div>
                     <div>Kind: <span style={{ color: '#10b981' }}>{spline.kind}</span> {isMainRiver && '(main)'}</div>
                     <div>Nodes: <span style={{ color: '#fbbf24' }}>{spline.nodeIds.length}</span></div>
-                    <div>Width: <span style={{ color: '#fbbf24' }}>{spline.width.kind === 'px' ? `${spline.width.value}px` : `${spline.width.value}%`}</span></div>
+                    <div>
+                      Width:
+                      <span style={{ color: '#fbbf24' }}>
+                        {(() => {
+                          const widthSpec = spline.attributes?.width ?? spline.width;
+                          if (!widthSpec) {
+                            return '—';
+                          }
+                          return widthSpec.kind === 'px'
+                            ? `${widthSpec.value}px`
+                            : `${widthSpec.value}%`;
+                        })()}
+                      </span>
+                    </div>
                     {spline.parentId && (
                       <>
                         <div>Parent: <span style={{ color: '#a855f7' }}>{spline.parentId.slice(0, 8)}...</span></div>
@@ -927,10 +985,10 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
 
         <RiverOverlay
           overlayRef={overlayRef}
-          width={cols * gridSize}
-          height={rows * gridSize}
+          width={cols * effectiveGridSize}
+          height={rows * effectiveGridSize}
           riverGraph={legacyGraphForOverlay}
-          activeSplineId={activeSplineId ?? 'main'}
+          activeSplineId={overlayActiveSplineId}
           selectedPointId={selectedNodeId}
           hoveredPointId={hoveredPointId}
           hoveredTributaryId={hoveredTributaryId}

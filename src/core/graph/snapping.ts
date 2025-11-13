@@ -121,7 +121,7 @@ export function findSplineSnapPoint(
   let closestSnap: SplineSnapResult | null = null;
   let closestDist = snapDistance;
 
-  for (const [splineId, spline] of Object.entries(graph.splines)) {
+  for (const [splineId] of Object.entries(graph.splines)) {
     // Apply filter if provided
     if (filter && !filter(splineId as SplineId)) {
       continue;
@@ -339,7 +339,7 @@ export function findTributarySnapTarget(
     // Only snap to main river or independent rivers (not tributaries)
     (splineId) => {
       const spline = graph.splines[splineId];
-      return spline && (splineId === graph.mainSplineId || (spline.kind === 'river' && !spline.parentId));
+      return spline && spline.parentId === null;
     }
   );
 
