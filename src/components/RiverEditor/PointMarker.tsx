@@ -64,9 +64,18 @@ export const PointMarker: React.FC<PointMarkerProps> = ({
         r={hitRadius}
         fill="transparent"
         style={{ cursor: 'grab', pointerEvents: 'all' }}
-        onMouseDown={onMouseDown}
-        onClick={onClick}
-        onDoubleClick={onDoubleClick}
+        onMouseDown={(e) => {
+          e.stopPropagation();
+          onMouseDown();
+        }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick(e);
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          onDoubleClick(e);
+        }}
       />
 
       {/* Visual marker */}

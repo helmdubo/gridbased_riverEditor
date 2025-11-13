@@ -420,6 +420,24 @@ export class GraphService {
 
     return { graph: finalGraph, tributaryId: tribSplineId, newNodeId };
   }
+
+  /**
+   * Merges two nodes in the same spline
+   *
+   * @param graph - Current graph
+   * @param draggedNodeId - Node being dragged
+   * @param targetNodeId - Node being dropped onto
+   * @param survivorNodeId - ID of node that survives (from nodeKinds.getMergeSurvivor)
+   * @returns Updated graph with nodes merged
+   */
+  static mergeNodes(
+    graph: RiverGraphV2,
+    draggedNodeId: NodeId,
+    targetNodeId: NodeId,
+    survivorNodeId: NodeId
+  ): RiverGraphV2 {
+    return graphOps.mergeNodes(graph, draggedNodeId, targetNodeId, survivorNodeId);
+  }
 }
 
 export default GraphService;

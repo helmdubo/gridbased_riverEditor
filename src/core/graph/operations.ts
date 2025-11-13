@@ -756,6 +756,99 @@ export function updateSplineWidth(
 }
 
 /**
+ * Merges two nodes in the same spline
+ *
+ * The higher priority node survives, or target survives on equal priority.
+ * The loser node is removed, and all references are replaced with the survivor.
+ *
+ * Rules:
+ * - Must be in same spline
+ * - Cannot merge incompatible node kinds (see nodeKinds.canMergeNodes)
+ * - Survivor keeps its position
+ *
+ * @param graph - Current graph state
+ * @param draggedNodeId - Node being dragged
+ * @param targetNodeId - Node being dropped onto
+ * @param survivorNodeId - ID of node that should survive (from getMergeSurvivor)
+ * @returns New graph with nodes merged
+ *
+ * @ue_equivalent
+ * UFUNCTION(BlueprintCallable)
+ * static FRiverGraph MergeNodes(const FRiverGraph& Graph,
+ *                                FGuid DraggedNode,
+ *                                FGuid TargetNode,
+ *                                FGuid SurvivorNode);
+ */
+export function mergeNodes(
+  graph: RiverGraphV2,
+  draggedNodeId: NodeId,
+  targetNodeId: NodeId,
+  survivorNodeId: NodeId
+): RiverGraphV2 {
+  if (draggedNodeId === targetNodeId) {
+    return graph;
+  }
+
+  const newGraph = cloneGraph(graph);
+
+  // Determine which node to remove
+  const loserNodeId = survivorNodeId === draggedNodeId ? targetNodeId : draggedNodeId;
+
+  // Find the spline containing these nodes
+  let targetSplineId: SplineId | null = null;
+  for (const [splineId, spline] of Object.entries(newGraph.splines)) {
+    if (
+      spline.nodeIds.includes(draggedNodeId as string) &&
+      spline.nodeIds.includes(targetNodeId as string)
+    ) {
+      targetSplineId = splineId as SplineId;
+      break;
+    }
+  }
+
+  if (!targetSplineId) {
+    console.warn('Cannot merge nodes: not in same spline');
+    return graph;
+  }
+
+  const spline = newGraph.splines[targetSplineId];
+
+  // Replace loser with survivor in nodeIds array
+  const newNodeIds = spline.nodeIds.map((id) =>
+    id === loserNodeId ? (survivorNodeId as string) : id
+  );
+
+  // Remove duplicate survivors (if both nodes became the same)
+  const deduplicatedNodeIds: string[] = [];
+  for (let i = 0; i < newNodeIds.length; i++) {
+    if (i === 0 || newNodeIds[i] !== newNodeIds[i - 1]) {
+      deduplicatedNodeIds.push(newNodeIds[i]);
+    }
+  }
+
+  // Update spline
+  newGraph.splines[targetSplineId] = {
+    ...spline,
+    nodeIds: deduplicatedNodeIds,
+  };
+
+  // If loser was a junction, update any tributaries that referenced it
+  for (const [otherId, otherSpline] of Object.entries(newGraph.splines)) {
+    if (otherSpline.parentJunction === loserNodeId) {
+      newGraph.splines[otherId] = {
+        ...otherSpline,
+        parentJunction: survivorNodeId,
+      };
+    }
+  }
+
+  // Delete loser node
+  delete newGraph.nodes[loserNodeId];
+
+  return newGraph;
+}
+
+/**
  * Creates an empty graph
  *
  * @ue_equivalent

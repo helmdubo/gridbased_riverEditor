@@ -9,11 +9,13 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useRiverGraphV2 } from '@hooks/useRiverGraphV2';
 import { useRiverRendererV2 } from '@hooks/useRiverRendererV2';
 import { RiverOverlay } from './RiverEditor/RiverOverlay';
-import { DEFAULT_GRID_SIZE, DEFAULT_MAIN_RIVERBED_WIDTH, DEFAULT_RIVER_TYPE } from '@domain/constants';
+import { DEFAULT_GRID_SIZE, DEFAULT_MAIN_RIVERBED_WIDTH, DEFAULT_RIVER_TYPE, SNAP_DISTANCE, SPLINE_SNAP_DISTANCE } from '@domain/constants';
 import type { RiverType } from '@domain/models/types';
 import GraphService from '@services/GraphService';
 import type { NodeId, SplineId, Spline } from '@/core/graph/types';
 import { makeNodeId } from '@/core/graph/types';
+import { findTributarySnapTarget, type SnapTargetNode, type SplineSnapResult } from '@/core/graph/snapping';
+import { canMergeNodes, getMergeSurvivor } from '@/core/graph/nodeKinds';
 
 interface RiverEditorDemoProps {
   cols: number;
@@ -36,6 +38,35 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   const [draggingPointId, setDraggingPointId] = useState<NodeId | null>(null);
   const [draggingTributaryInfo, setDraggingTributaryInfo] = useState<{ id: string; pointId: string; isMouth: boolean } | null>(null);
   const overlayRef = useRef<SVGSVGElement>(null);
+  const [capturedPointerId, setCapturedPointerId] = useState<number | null>(null);
+  const wasDraggingRef = useRef(false); // Track if we were dragging to prevent click after drag
+
+  // Snapping state
+  const [snapTargetNode, setSnapTargetNode] = useState<SnapTargetNode | null>(null);
+  const [splineSnapInfo, setSplineSnapInfo] = useState<SplineSnapResult | null>(null);
+
+  // P0 BUGFIX: Pointer capture for stable drag - capture ONLY when dragging starts
+  useEffect(() => {
+    const isDragging = draggingPointId !== null || draggingTributaryInfo !== null;
+    const overlay = overlayRef.current;
+
+    if (isDragging && overlay && capturedPointerId === null) {
+      // Capture mouse pointer (ID = 1 for mouse, touch events have different IDs)
+      // We'll capture in the actual pointerDown event
+      console.log('🔒 Drag started - ready to capture pointer');
+    } else if (!isDragging && overlay && capturedPointerId !== null) {
+      // Release capture when drag ends
+      try {
+        if (overlay.hasPointerCapture(capturedPointerId)) {
+          overlay.releasePointerCapture(capturedPointerId);
+          console.log('🔓 Drag ended - pointer released');
+        }
+      } catch (e) {
+        console.warn('Failed to release pointer capture:', e);
+      }
+      setCapturedPointerId(null);
+    }
+  }, [draggingPointId, draggingTributaryInfo, capturedPointerId]);
 
   // River graph state (V2)
   const {
@@ -51,6 +82,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     updateSplineWidth,
     activeSpline,
     mainSpline,
+    mergeNodes,
   } = useRiverGraphV2();
 
   const computeWidthPx = useCallback(
@@ -172,7 +204,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   };
 
   // Renderer with geometry cache + P0 bugfixes
-  const { canvasRef, legacyGraph, render } = useRiverRendererV2(
+  const { canvasRef, geometryCache, render } = useRiverRendererV2(
     riverGraph,
     mainRiverWidthPx,
     cols,
@@ -186,8 +218,65 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     }
   );
 
+  // TEMPORARY: Convert V2 graph to legacy format for RiverOverlay
+  // TODO: Update RiverOverlay to work with RiverGraphV2 directly
+  const legacyGraphForOverlay = React.useMemo(() => {
+    const mainRiver: Array<{ x: number; y: number; id: string }> = [];
+    const tributaries = new Map<string, any>();
+
+    const mainSplineId = riverGraph.mainSplineId;
+    const mainSpline = mainSplineId ? riverGraph.splines[mainSplineId] : null;
+
+    if (mainSpline) {
+      for (const nodeId of mainSpline.nodeIds) {
+        const node = riverGraph.nodes[nodeId];
+        if (node) {
+          mainRiver.push({ x: node.x, y: node.y, id: node.id });
+        }
+      }
+    }
+
+    for (const [splineId, spline] of Object.entries(riverGraph.splines)) {
+      if (splineId === mainSplineId) continue;
+
+      const points: Array<{ x: number; y: number; id: string }> = [];
+      for (const nodeId of spline.nodeIds) {
+        const node = riverGraph.nodes[nodeId];
+        if (node) {
+          points.push({ x: node.x, y: node.y, id: node.id });
+        }
+      }
+
+      if (points.length > 0) {
+        const isIndependent = spline.kind === 'river' && !spline.parentId;
+        const isDetached = spline.kind === 'tributary' && spline.parentId === null;
+
+        tributaries.set(splineId, {
+          id: splineId,
+          parentPointId: spline.parentJunction,
+          points,
+          widthPercent: spline.width.kind === 'relative' ? spline.width.value : 50,
+          isDetached,
+          isIndependent,
+          resolvedWidthPx: computeWidthPx(spline),
+          parentSplineId: spline.parentId,
+          widthKind: spline.width.kind,
+        });
+      }
+    }
+
+    return { mainRiver, tributaries };
+  }, [riverGraph, computeWidthPx]);
+
   // Render on changes
   useEffect(() => {
+    // Convert V2 snap info to legacy format for RenderServiceV2
+    const legacySplineSnap = splineSnapInfo ? {
+      segmentIndex: splineSnapInfo.curveIndex,
+      t: splineSnapInfo.t,
+      point: splineSnapInfo.point,
+    } : null;
+
     render({
       showFlowMap,
       showFlowArrows,
@@ -195,8 +284,8 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
       arrowSpacing: 1,
       flowStrength: 1.0,
       activeSplineId: activeSplineId ?? 'main',
-      snapTargetPointId: null,
-      splineSnapInfo: null,
+      snapTargetPointId: snapTargetNode ? snapTargetNode.nodeId : null,
+      splineSnapInfo: legacySplineSnap,
       hoveredSegment: null,
       insertPointPreview: null,
       mainRiverbedWidth: mainRiverWidthPx,
@@ -209,18 +298,38 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     riverType,
     mainRiverWidthPx,
     activeSplineId,
+    snapTargetNode,
+    splineSnapInfo,
   ]);
 
   const handleStageClick = useCallback((x: number, y: number) => {
-    console.log('🖱️ Stage click:', { x, y });
-    addPointToActiveSpline(x, y, newTributaryWidthPercent);
+    // Use snap coordinates if available
+    let finalX = x;
+    let finalY = y;
+
+    if (snapTargetNode) {
+      finalX = snapTargetNode.node.x;
+      finalY = snapTargetNode.node.y;
+      console.log('📍 Snapping to node:', snapTargetNode.nodeId);
+    } else if (splineSnapInfo) {
+      finalX = splineSnapInfo.point.x;
+      finalY = splineSnapInfo.point.y;
+      console.log('📍 Snapping to spline:', splineSnapInfo.splineId);
+    }
+
+    console.log('🖱️ Stage click:', { x: finalX, y: finalY });
+    addPointToActiveSpline(finalX, finalY, newTributaryWidthPercent);
     console.log(
       '📊 Graph updated - nodes:',
       Object.keys(riverGraph.nodes).length,
       'splines:',
       Object.keys(riverGraph.splines).length
     );
-  }, [addPointToActiveSpline, newTributaryWidthPercent, riverGraph]);
+
+    // Clear snap highlights after adding point
+    setSnapTargetNode(null);
+    setSplineSnapInfo(null);
+  }, [addPointToActiveSpline, newTributaryWidthPercent, riverGraph, snapTargetNode, splineSnapInfo]);
 
   // Handle canvas click (fallback)
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -232,6 +341,12 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   };
 
   const handleOverlayBackgroundClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    // Don't create vertex if we just finished dragging
+    if (wasDraggingRef.current) {
+      console.log('🚫 Ignoring click after drag');
+      return;
+    }
+
     const rect = e.currentTarget.getBoundingClientRect();
     handleStageClick(e.clientX - rect.left, e.clientY - rect.top);
   }, [handleStageClick]);
@@ -239,6 +354,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
   // Node interaction handlers
   const handlePointMouseDown = useCallback((pointId: string) => {
     console.log('🖱️ Point mouse down:', pointId);
+    wasDraggingRef.current = false; // Reset flag when starting new interaction
     const nodeId = makeNodeId(pointId);
     setDraggingPointId(nodeId);
     selectNode(nodeId);
@@ -258,20 +374,33 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     deleteNode(makeNodeId(pointId));
   }, [deleteNode]);
 
-  const handleOverlayMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+  // P0 BUGFIX: Use PointerEvent for better capture support
+  const handleOverlayPointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    // Capture pointer when drag starts
+    const isDragging = draggingPointId !== null || draggingTributaryInfo !== null;
+    if (isDragging && capturedPointerId === null && overlayRef.current) {
+      try {
+        overlayRef.current.setPointerCapture(e.pointerId);
+        setCapturedPointerId(e.pointerId);
+        console.log('🔒 Pointer captured:', e.pointerId);
+      } catch (err) {
+        console.warn('Failed to capture pointer:', err);
+      }
+    }
 
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
     // Update hover state when not dragging
-    if (!draggingPointId && !draggingTributaryInfo) {
+    if (!isDragging) {
       let found = false;
 
       // Check main river points
-      legacyGraph.mainRiver.forEach((p) => {
+      legacyGraphForOverlay.mainRiver.forEach((p) => {
         if (!found && Math.hypot(p.x - x, p.y - y) < 15) {
           setHoveredPointId(p.id);
           setHoveredTributaryId(null);
@@ -282,7 +411,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
 
       // Check tributary points
       if (!found) {
-        legacyGraph.tributaries.forEach((trib, id) => {
+        legacyGraphForOverlay.tributaries.forEach((trib, id) => {
           trib.points.forEach((p) => {
             if (!found && Math.hypot(p.x - x, p.y - y) < 15) {
               setHoveredPointId(null);
@@ -304,6 +433,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
 
     // Handle dragging main river point
     if (draggingPointId) {
+      wasDraggingRef.current = true; // Mark that we're dragging
       const newX = Math.max(0, Math.min(cols * gridSize, x));
       const newY = Math.max(0, Math.min(rows * gridSize, y));
       moveNode(draggingPointId, newX, newY);
@@ -311,31 +441,151 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
 
     // Handle dragging tributary point
     if (draggingTributaryInfo) {
+      wasDraggingRef.current = true; // Mark that we're dragging
       const newX = Math.max(0, Math.min(cols * gridSize, x));
       const newY = Math.max(0, Math.min(rows * gridSize, y));
       moveNode(makeNodeId(draggingTributaryInfo.pointId), newX, newY);
     }
-  }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraph, cols, rows, gridSize]);
 
-  const handleOverlayMouseUp = useCallback(() => {
+    // Check for snapping ONLY when dragging (to show target highlights)
+    if (isDragging) {
+      let snapFound = false;
+
+      // Priority 1: Check for same-spline node merge (if dragging a point)
+      const actualDraggedId = draggingPointId || (draggingTributaryInfo ? makeNodeId(draggingTributaryInfo.pointId) : null);
+
+      if (actualDraggedId) {
+        // Find which spline contains the dragged node
+        const draggedSplineEntry = Object.entries(riverGraph.splines).find(([, spline]) =>
+          spline.nodeIds.includes(actualDraggedId as string)
+        );
+
+        if (draggedSplineEntry) {
+          const [draggedSplineId, draggedSpline] = draggedSplineEntry;
+
+          // Look for other nodes in the same spline within snap distance
+          for (const nodeIdStr of draggedSpline.nodeIds) {
+            const nodeId = makeNodeId(nodeIdStr);
+            if (nodeId === actualDraggedId) continue; // Skip self
+
+            const node = riverGraph.nodes[nodeIdStr];
+            if (!node) continue;
+
+            const dist = Math.hypot(node.x - x, node.y - y);
+            if (dist < SNAP_DISTANCE) {
+              // Check if merge is allowed
+              if (canMergeNodes(riverGraph, actualDraggedId, nodeId)) {
+                setSnapTargetNode({
+                  nodeId,
+                  node,
+                  distance: dist,
+                });
+                setSplineSnapInfo(null);
+                snapFound = true;
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      // Priority 2: Check for tributary attachment targets (if no merge target found)
+      if (!snapFound) {
+        const snapTarget = findTributarySnapTarget(
+          riverGraph,
+          geometryCache,
+          x,
+          y,
+          SNAP_DISTANCE,
+          SPLINE_SNAP_DISTANCE,
+          mainRiverWidthPx
+        );
+
+        if (snapTarget) {
+          if (snapTarget.type === 'node') {
+            setSnapTargetNode(snapTarget.data);
+            setSplineSnapInfo(null);
+          } else {
+            setSnapTargetNode(null);
+            setSplineSnapInfo(snapTarget.data);
+          }
+          snapFound = true;
+        }
+      }
+
+      // Clear if no snap target found
+      if (!snapFound) {
+        setSnapTargetNode(null);
+        setSplineSnapInfo(null);
+      }
+    } else {
+      // Clear snap highlights when not dragging
+      setSnapTargetNode(null);
+      setSplineSnapInfo(null);
+    }
+  }, [draggingPointId, draggingTributaryInfo, moveNode, legacyGraphForOverlay, cols, rows, gridSize, capturedPointerId, riverGraph, geometryCache, mainRiverWidthPx]);
+
+  const handleOverlayPointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     if (draggingPointId || draggingTributaryInfo) {
       console.log('✅ Drag complete');
+
+      // Check if we should merge nodes
+      const actualDraggedId = draggingPointId || (draggingTributaryInfo ? makeNodeId(draggingTributaryInfo.pointId) : null);
+
+      if (actualDraggedId && snapTargetNode) {
+        const targetNodeId = snapTargetNode.nodeId;
+
+        // Check if merge is allowed
+        if (canMergeNodes(riverGraph, actualDraggedId, targetNodeId)) {
+          console.log('🔄 Merging nodes:', { draggedId: actualDraggedId, targetId: targetNodeId });
+
+          // Determine survivor
+          const survivorId = getMergeSurvivor(riverGraph, actualDraggedId, targetNodeId);
+          console.log('✅ Survivor:', survivorId);
+
+          // Perform merge
+          mergeNodes(actualDraggedId, targetNodeId, survivorId);
+        } else {
+          console.log('🚫 Cannot merge these nodes');
+        }
+      }
+
+      // Clear snap highlights
+      setSnapTargetNode(null);
+      setSplineSnapInfo(null);
+
       setDraggingPointId(null);
       setDraggingTributaryInfo(null);
+
+      // Reset wasDragging flag after a short delay to prevent onClick from firing
+      setTimeout(() => {
+        wasDraggingRef.current = false;
+      }, 50);
     }
-  }, [draggingPointId, draggingTributaryInfo]);
+  }, [draggingPointId, draggingTributaryInfo, snapTargetNode, riverGraph, mergeNodes]);
 
   const handleOverlayMouseLeave = useCallback(() => {
     if (draggingPointId || draggingTributaryInfo) {
       console.log('⚠️ Drag cancelled (mouse left canvas)');
+
+      // Clear snap highlights
+      setSnapTargetNode(null);
+      setSplineSnapInfo(null);
+
       setDraggingPointId(null);
       setDraggingTributaryInfo(null);
+
+      // Reset wasDragging flag
+      setTimeout(() => {
+        wasDraggingRef.current = false;
+      }, 50);
     }
   }, [draggingPointId, draggingTributaryInfo]);
 
   // Tributary interaction
   const handleTributaryPointMouseDown = useCallback((id: string, pointId: string, isMouth: boolean) => {
     console.log('🖱️ Tributary point mouse down:', { id, pointId, isMouth });
+    wasDraggingRef.current = false; // Reset flag when starting new interaction
     setDraggingTributaryInfo({ id, pointId, isMouth });
     selectNode(makeNodeId(pointId));
     setActiveSpline(id as SplineId);
@@ -581,7 +831,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
           overlayRef={overlayRef}
           width={cols * gridSize}
           height={rows * gridSize}
-          riverGraph={legacyGraph}
+          riverGraph={legacyGraphForOverlay}
           activeSplineId={activeSplineId ?? 'main'}
           selectedPointId={selectedNodeId}
           hoveredPointId={hoveredPointId}
@@ -589,9 +839,9 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
           hoveredTributaryPointId={hoveredTributaryPointId}
           snapTargetPointId={null}
           insertPointPreview={null}
-          onMouseMove={handleOverlayMouseMove}
-          onMouseUp={handleOverlayMouseUp}
-          onMouseLeave={handleOverlayMouseLeave}
+          onPointerMove={handleOverlayPointerMove}
+          onPointerUp={handleOverlayPointerUp}
+          onPointerLeave={handleOverlayMouseLeave}
           onBackgroundClick={handleOverlayBackgroundClick}
           onPointMouseDown={handlePointMouseDown}
           onPointClick={handlePointClick}

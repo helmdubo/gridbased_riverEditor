@@ -393,6 +393,26 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
   );
 
   /**
+   * Merges two nodes in the same spline
+   *
+   * @param draggedNodeId - Node being dragged
+   * @param targetNodeId - Node being dropped onto
+   * @param survivorNodeId - Node that should survive (from nodeKinds.getMergeSurvivor)
+   */
+  const mergeNodes = useCallback(
+    (draggedNodeId: NodeId, targetNodeId: NodeId, survivorNodeId: NodeId) => {
+      const newGraph = GraphService.mergeNodes(riverGraph, draggedNodeId, targetNodeId, survivorNodeId);
+      setRiverGraph(newGraph);
+
+      // Update selected node to survivor if one of the merged nodes was selected
+      if (selectedNodeId === draggedNodeId || selectedNodeId === targetNodeId) {
+        setSelectedNodeId(survivorNodeId);
+      }
+    },
+    [riverGraph, selectedNodeId]
+  );
+
+  /**
    * Clears the entire graph
    */
   const clearAll = useCallback(() => {
@@ -449,6 +469,7 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
     splitEdgeAtSegment,
     clearAll,
     beginNewSpline,
+    mergeNodes,
 
     // Convenience getters
     mainSpline: GraphService.getMainSpline(riverGraph),
