@@ -429,6 +429,8 @@ export function deleteSpline(graph: RiverGraphV2, splineId: SplineId): RiverGrap
 
   syncRootMetadata(newGraph);
 
+  refreshAllNodeKinds(newGraph);
+
   return newGraph;
 }
 
@@ -664,6 +666,8 @@ export function detachTributary(
   refreshAllNodeKinds(newGraph);
 
   syncRootMetadata(newGraph);
+
+  refreshAllNodeKinds(newGraph);
 
   return {
     graph: newGraph,
