@@ -21,12 +21,19 @@ export type SplineId = string & { readonly __brand: 'SplineId' };
 
 /**
  * Spline kind - distinguishes independent rivers from tributaries
- * 'river' = independent watercourse (may be main via mainSplineId or separate)
+ * 'river' = independent watercourse (may be highlighted as main via isMain flag)
  * 'tributary' = child watercourse attached to parent river
  *
  * @ue_equivalent UENUM() in C++
  */
 export type SplineKind = 'river' | 'tributary';
+
+/**
+ * Direction of flow for a spline.
+ * 1  => downstream follows nodeIds order (source → mouth)
+ * -1 => downstream is opposite to nodeIds order (used for reverse rendering)
+ */
+export type FlowSign = 1 | -1;
 
 /**
  * Width specification - either absolute pixels or relative to parent
@@ -46,19 +53,52 @@ export interface Width {
 }
 
 /**
- * Graph node representing a point in 2D space
+ * River node role within the topological graph
+ *
+ * - `source`: upstream endpoint of a spline
+ * - `mouth`: downstream endpoint of a spline
+ * - `junction`: shared node between two or more splines
+ * - `inner`: interior control point on a spline (default)
+ *
+ * @ue_equivalent
+ * UENUM(BlueprintType)
+ * enum class ERiverNodeKind : uint8 {
+ *   Source,
+ *   Mouth,
+ *   Junction,
+ *   Inner
+ * };
+ */
+export type NodeKind = 'source' | 'mouth' | 'junction' | 'inner';
+
+/**
+ * Graph node representing a point in 2D space and its topological role
  *
  * @ue_equivalent
  * USTRUCT(BlueprintType)
  * struct FRiverNode {
  *   UPROPERTY() FGuid Id;
  *   UPROPERTY() FVector2D Position; // x, y
+ *   UPROPERTY() ERiverNodeKind Kind;
  * };
  */
 export interface Node {
   id: NodeId;
   x: number;
   y: number;
+  kind: NodeKind;
+}
+
+/**
+ * Physical attributes of a river at spline level.
+ *
+ * These parameters can later be extended to per-segment overrides.
+ */
+export interface RiverAttributes {
+  width: Width;
+  depth?: number;
+  baseSpeed?: number;
+  riverType?: string;
 }
 
 /**
@@ -95,6 +135,9 @@ export interface Spline {
   /** Spline type: 'river' for independent, 'tributary' for attached child */
   kind: SplineKind;
 
+  /** Direction multiplier for downstream tangents */
+  flowSign: FlowSign;
+
   /**
    * Ordered list of node IDs defining the spline path (downstream direction)
    * nodeIds[0] = source (upstream), nodeIds[last] = mouth (downstream)
@@ -114,8 +157,17 @@ export interface Spline {
    */
   parentJunction: NodeId | null;
 
-  /** Width specification (absolute px or relative to parent) */
-  width: Width;
+  /** Physical attributes shared along the spline */
+  attributes: RiverAttributes;
+
+  /** Whether this spline currently behaves as an independent river */
+  isIndependent: boolean;
+
+  /** Whether this spline is detached from any parent while remaining a tributary */
+  isDetached: boolean;
+
+  /** Marks spline as "main" for UI highlighting. Multiple splines may be main. */
+  isMain: boolean;
 
   /**
    * SplineIds of tributaries attached to this river (empty array for tributaries)
@@ -138,7 +190,7 @@ export interface Spline {
  * struct FRiverGraph {
  *   UPROPERTY() TMap<FGuid, FRiverNode> Nodes;
  *   UPROPERTY() TMap<FGuid, FRiverSpline> Splines;
- *   UPROPERTY() FGuid MainSplineId;
+ *   UPROPERTY() TArray<FGuid> RootSplineIds;
  * };
  */
 export interface RiverGraphV2 {
@@ -148,8 +200,8 @@ export interface RiverGraphV2 {
   /** All splines in the graph, indexed by ID */
   splines: Record<string, Spline>;
 
-  /** ID of the main river spline (null if no main river exists yet) */
-  mainSplineId: SplineId | null;
+  /** Identifiers of all independent root rivers */
+  rootSplineIds: SplineId[];
 }
 
 /**
@@ -196,16 +248,23 @@ export function makeSplineId(id: string): SplineId {
   return id as SplineId;
 }
 
-/**
- * Helper to create absolute width in pixels
- */
 export function makeWidthPx(value: number): Width {
   return { kind: 'px', value };
 }
 
-/**
- * Helper to create relative width (percentage 0-100)
- */
 export function makeWidthRelative(value: number): Width {
   return { kind: 'relative', value };
+}
+
+/**
+ * Creates river attributes with provided width and optional overrides.
+ */
+export function makeRiverAttributes(
+  width: Width,
+  overrides: Partial<Omit<RiverAttributes, 'width'>> = {}
+): RiverAttributes {
+  return {
+    width,
+    ...overrides,
+  };
 }
