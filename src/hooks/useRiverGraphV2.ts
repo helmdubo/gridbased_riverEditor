@@ -413,6 +413,55 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
   );
 
   /**
+   * Attaches an existing spline as a tributary to another spline
+   *
+   * @param draggedNodeId - Endpoint node (source or mouth) of spline to attach
+   * @param targetNodeId - Node where tributary will attach (becomes junction)
+   */
+  const attachSplineAsTributary = useCallback(
+    (draggedNodeId: NodeId, targetNodeId: NodeId) => {
+      const newGraph = GraphService.attachSplineAsTributary(riverGraph, draggedNodeId, targetNodeId);
+      setRiverGraph(newGraph);
+
+      // Update selected node to target (new junction)
+      setSelectedNodeId(targetNodeId);
+    },
+    [riverGraph]
+  );
+
+  /**
+   * Merges two splines end-to-end (river extension)
+   *
+   * @param draggedNodeId - Endpoint of dragged spline (source or mouth)
+   * @param targetNodeId - Endpoint of target spline (mouth or source)
+   */
+  const mergeSplines = useCallback(
+    (draggedNodeId: NodeId, targetNodeId: NodeId) => {
+      // Determine active spline ID
+      const actualActiveSplineId = activeSplineId === 'main'
+        ? riverGraph.mainSplineId
+        : activeSplineId;
+
+      if (!actualActiveSplineId) {
+        console.warn('Cannot merge: no active spline');
+        return;
+      }
+
+      const newGraph = GraphService.mergeSplines(
+        riverGraph,
+        draggedNodeId,
+        targetNodeId,
+        actualActiveSplineId
+      );
+      setRiverGraph(newGraph);
+
+      // Keep active spline as active
+      setActiveSplineId(actualActiveSplineId);
+    },
+    [riverGraph, activeSplineId]
+  );
+
+  /**
    * Clears the entire graph
    */
   const clearAll = useCallback(() => {
@@ -470,6 +519,8 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
     clearAll,
     beginNewSpline,
     mergeNodes,
+    attachSplineAsTributary,
+    mergeSplines,
 
     // Convenience getters
     mainSpline: GraphService.getMainSpline(riverGraph),

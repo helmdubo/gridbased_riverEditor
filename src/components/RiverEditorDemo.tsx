@@ -15,7 +15,7 @@ import GraphService from '@services/GraphService';
 import type { NodeId, SplineId, Spline } from '@/core/graph/types';
 import { makeNodeId } from '@/core/graph/types';
 import { findTributarySnapTarget, type SnapTargetNode, type SplineSnapResult } from '@/core/graph/snapping';
-import { canMergeNodes, getMergeSurvivor } from '@/core/graph/nodeKinds';
+import { canMergeNodes, getMergeSurvivor, canAttachAsTributary, canMergeSplines } from '@/core/graph/nodeKinds';
 
 interface RiverEditorDemoProps {
   cols: number;
@@ -83,6 +83,8 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     activeSpline,
     mainSpline,
     mergeNodes,
+    attachSplineAsTributary,
+    mergeSplines,
   } = useRiverGraphV2();
 
   const computeWidthPx = useCallback(
@@ -487,9 +489,49 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
             }
           }
         }
+
+        // Priority 2: Check for spline merge (end-to-end connection) across different splines
+        if (!snapFound && actualDraggedId) {
+          for (const [splineId, spline] of Object.entries(riverGraph.splines)) {
+            for (const nodeIdStr of spline.nodeIds) {
+              const nodeId = makeNodeId(nodeIdStr);
+              if (nodeId === actualDraggedId) continue; // Skip self
+
+              const node = riverGraph.nodes[nodeIdStr];
+              if (!node) continue;
+
+              const dist = Math.hypot(node.x - x, node.y - y);
+              if (dist < SNAP_DISTANCE) {
+                // Check if spline merge is allowed (end-to-end connection)
+                if (canMergeSplines(riverGraph, actualDraggedId, nodeId)) {
+                  setSnapTargetNode({
+                    nodeId,
+                    node,
+                    distance: dist,
+                  });
+                  setSplineSnapInfo(null);
+                  snapFound = true;
+                  break;
+                }
+                // Check if tributary attachment is allowed
+                else if (canAttachAsTributary(riverGraph, actualDraggedId, nodeId)) {
+                  setSnapTargetNode({
+                    nodeId,
+                    node,
+                    distance: dist,
+                  });
+                  setSplineSnapInfo(null);
+                  snapFound = true;
+                  break;
+                }
+              }
+            }
+            if (snapFound) break;
+          }
+        }
       }
 
-      // Priority 2: Check for tributary attachment targets (if no merge target found)
+      // Priority 3: Check for spline snap (create junction on spline segment) (if no node target found)
       if (!snapFound) {
         const snapTarget = findTributarySnapTarget(
           riverGraph,
@@ -529,15 +571,15 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
     if (draggingPointId || draggingTributaryInfo) {
       console.log('✅ Drag complete');
 
-      // Check if we should merge nodes
+      // Check if we should perform an operation
       const actualDraggedId = draggingPointId || (draggingTributaryInfo ? makeNodeId(draggingTributaryInfo.pointId) : null);
 
       if (actualDraggedId && snapTargetNode) {
         const targetNodeId = snapTargetNode.nodeId;
 
-        // Check if merge is allowed
+        // Priority 1: Check for same-spline node merge
         if (canMergeNodes(riverGraph, actualDraggedId, targetNodeId)) {
-          console.log('🔄 Merging nodes:', { draggedId: actualDraggedId, targetId: targetNodeId });
+          console.log('🔄 Merging nodes (same spline):', { draggedId: actualDraggedId, targetId: targetNodeId });
 
           // Determine survivor
           const survivorId = getMergeSurvivor(riverGraph, actualDraggedId, targetNodeId);
@@ -545,8 +587,23 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
 
           // Perform merge
           mergeNodes(actualDraggedId, targetNodeId, survivorId);
-        } else {
-          console.log('🚫 Cannot merge these nodes');
+        }
+        // Priority 2: Check for spline merge (end-to-end connection for river extension)
+        else if (canMergeSplines(riverGraph, actualDraggedId, targetNodeId)) {
+          console.log('🔗 Merging splines (river extension):', { draggedId: actualDraggedId, targetId: targetNodeId });
+
+          // Perform spline merge
+          mergeSplines(actualDraggedId, targetNodeId);
+        }
+        // Priority 3: Check for tributary attachment
+        else if (canAttachAsTributary(riverGraph, actualDraggedId, targetNodeId)) {
+          console.log('🌿 Attaching spline as tributary:', { draggedId: actualDraggedId, targetId: targetNodeId });
+
+          // Perform tributary attachment
+          attachSplineAsTributary(actualDraggedId, targetNodeId);
+        }
+        else {
+          console.log('🚫 Cannot perform any operation on these nodes');
         }
       }
 
@@ -562,7 +619,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows }) 
         wasDraggingRef.current = false;
       }, 50);
     }
-  }, [draggingPointId, draggingTributaryInfo, snapTargetNode, riverGraph, mergeNodes]);
+  }, [draggingPointId, draggingTributaryInfo, snapTargetNode, riverGraph, mergeNodes, mergeSplines, attachSplineAsTributary]);
 
   const handleOverlayMouseLeave = useCallback(() => {
     if (draggingPointId || draggingTributaryInfo) {
