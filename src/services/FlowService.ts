@@ -2,7 +2,8 @@
  * Service for calculating water flow fields
  */
 
-import type { Point, FlowDirection, CurveData, RiverType } from '@domain/models/types';
+import type { Point, FlowDirection, RiverType } from '@domain/models/types';
+import type { CurveData } from './RenderServiceV2';
 import {
   distanceToCurve,
   nearestCurveIndex,
@@ -165,10 +166,9 @@ export class FlowService {
         const idx = nearestCurveIndex(closestCurve.curve, cx, cy);
         const frames = computeCurveFrames(closestCurve.curve);
 
-        // Set flow direction
-        // Main river: tangent already points downstream (source to mouth), so use +1
-        // Tributary: drawn from mouth to source, so invert (-1) to flow towards mouth
-        const flowSign = closestCurve.isMain ? 1 : -1;
+        // Set flow direction using explicit flowSign from spline
+        // flowSign: 1 = downstream (source → mouth), -1 = reversed
+        const flowSign = closestCurve.flowSign;
         dirField[r][c] = {
           vx: flowSign * frames.tangents[idx].vx,
           vy: flowSign * frames.tangents[idx].vy,

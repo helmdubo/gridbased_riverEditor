@@ -1258,10 +1258,10 @@ export function mergeSplines(
     ];
   } else if (survivorIsSource && absorbedIsMouth) {
     // Survivor source connects to absorbed mouth: [...absorbed, ...survivor]
-    // Keep absorbed's mouth, skip survivor's source (they merge into one node)
+    // Skip absorbed's mouth (will be deleted), keep survivor's source as merge point
     mergedNodeIds = [
-      ...absorbedSpline.nodeIds,
-      ...survivorSpline.nodeIds.slice(1), // Skip first node (source)
+      ...absorbedSpline.nodeIds.slice(0, -1), // Skip last node (mouth)
+      ...survivorSpline.nodeIds, // Keep survivor source as merge point
     ];
   } else {
     console.warn('Invalid merge: nodes are not in end-to-start configuration');
