@@ -108,6 +108,7 @@ export function getNodePriority(graph: RiverGraphV2, nodeId: NodeId): number {
  *
  * Merge rules:
  * - Must be in the same spline
+ * - Must be adjacent (neighbors in nodeIds array) to prevent loops
  * - Inner → anything: allowed (Inner is absorbed)
  * - Junction → Junction: forbidden
  * - Source → Source: forbidden
@@ -140,32 +141,53 @@ export function canMergeNodes(
     return false;
   }
 
-  const [draggedSplineId] = draggedEntry;
-  const [targetSplineId] = targetEntry;
+  const [draggedSplineId, draggedSpline] = draggedEntry;
+  const [targetSplineId, targetSpline] = targetEntry;
 
+  // Must be in the same spline
   if (draggedSplineId !== targetSplineId) {
+    return false;
+  }
+
+  // NEW: Check adjacency to prevent loops/twists
+  // Nodes must be neighbors in the nodeIds array
+  const draggedIndex = draggedSpline.nodeIds.indexOf(draggedNodeId as string);
+  const targetIndex = targetSpline.nodeIds.indexOf(targetNodeId as string);
+
+  if (draggedIndex === -1 || targetIndex === -1) {
+    return false;
+  }
+
+  const indexDistance = Math.abs(draggedIndex - targetIndex);
+  if (indexDistance !== 1) {
+    // Not adjacent - would create a loop or twist
     return false;
   }
 
   const draggedKind = getNodeKind(graph, draggedNodeId);
   const targetKind = getNodeKind(graph, targetNodeId);
 
+  // Inner nodes can merge with anything (they get absorbed)
   if (draggedKind === 'inner' || targetKind === 'inner') {
     return true;
   }
 
+  // Junction cannot merge with junction
   if (draggedKind === 'junction' && targetKind === 'junction') {
     return false;
   }
 
+  // Source cannot merge with source
   if (draggedKind === 'source' && targetKind === 'source') {
     return false;
   }
 
+  // Mouth cannot merge with mouth
   if (draggedKind === 'mouth' && targetKind === 'mouth') {
     return false;
   }
 
+  // Source and Mouth cannot merge (would collapse entire spline)
   if (
     (draggedKind === 'source' && targetKind === 'mouth') ||
     (draggedKind === 'mouth' && targetKind === 'source')
@@ -266,6 +288,31 @@ export function canMergeSplines(
 }
 
 /**
+ * Check if spline B is a descendant of spline A (direct or indirect child)
+ * This prevents creating cycles in the river hierarchy
+ */
+function isDescendantOf(graph: RiverGraphV2, splineId: SplineId, ancestorId: SplineId): boolean {
+  const spline = graph.splines[splineId];
+  if (!spline) {
+    return false;
+  }
+
+  // Check direct children
+  if (spline.children.includes(ancestorId as string)) {
+    return true;
+  }
+
+  // Check indirect descendants (recursive)
+  for (const childId of spline.children) {
+    if (isDescendantOf(graph, childId as SplineId, ancestorId)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Checks whether a dragged spline endpoint can attach as a tributary to the target node
  *
  * Conditions:
@@ -274,6 +321,7 @@ export function canMergeSplines(
  * - Dragged node must be an endpoint (source or mouth)
  * - Target spline must be an independent river
  * - Target node must not be the source node and must not already be a junction
+ * - Target spline must not be a descendant of dragged spline (prevents cycles)
  */
 export function canAttachAsTributary(
   graph: RiverGraphV2,
@@ -294,22 +342,27 @@ export function canAttachAsTributary(
   const [draggedSplineId, draggedSpline] = draggedEntry;
   const [targetSplineId, targetSpline] = targetEntry;
 
+  // Must be different splines
   if (draggedSplineId === targetSplineId) {
     return false;
   }
 
+  // Dragged spline cannot have children (would create nested tributaries)
   if (draggedSpline.children.length > 0) {
     return false;
   }
 
+  // Dragged spline must be independent (not already a tributary)
   if (draggedSpline.parentId !== null) {
     return false;
   }
 
+  // Dragged spline must be a river
   if (draggedSpline.kind !== 'river') {
     return false;
   }
 
+  // Dragged node must be an endpoint
   const draggedIndex = draggedSpline.nodeIds.indexOf(draggedNodeId as string);
   if (draggedIndex === -1) {
     return false;
@@ -321,17 +374,26 @@ export function canAttachAsTributary(
     return false;
   }
 
+  // Target spline must be independent (not a tributary itself)
   if (targetSpline.parentId !== null) {
     return false;
   }
 
+  // Target node must not be the source
   const targetIndex = targetSpline.nodeIds.indexOf(targetNodeId as string);
   if (targetIndex < 1) {
     return false;
   }
 
+  // Target node must not already be a junction
   const targetNode = graph.nodes[targetNodeId];
   if (targetNode?.kind === 'junction') {
+    return false;
+  }
+
+  // NEW: Prevent cycles - target spline cannot be a descendant of dragged spline
+  // This prevents: river A → river B (tributary) → trying to attach A to B (cycle!)
+  if (isDescendantOf(graph, draggedSplineId as SplineId, targetSplineId as SplineId)) {
     return false;
   }
 
