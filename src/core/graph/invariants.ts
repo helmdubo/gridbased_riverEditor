@@ -9,13 +9,19 @@
  * I2: The graph is acyclic (no spline can be its own ancestor)
  * I3: parentId !== null ⇒ this.id ∈ parent.children (bidirectional consistency)
  * I4: parentJunction ∈ parent.nodeIds[1..last] (not source, valid junction)
- * I5: children.length > 0 ⇒ parentId === null (tree depth ≤ 1, no nested tributaries)
+ * I5: Tree depth ≤ 2 (River → Tributary → Stream hierarchy)
+ *
+ * Hierarchy:
+ * - Level 0 (River): parentId === null, can have children
+ * - Level 1 (Tributary): parentId !== null, can have children
+ * - Level 2 (Stream): parentId !== null, cannot have children (must be leaf)
  */
 
 import type { RiverGraphV2, SplineId, Spline } from './types';
+import { getTreeDepth } from './nodeKinds';
 
 export interface ValidationError {
-  type: 'INVALID_PARENT_ID' | 'CYCLE_DETECTED' | 'PARENT_CHILD_MISMATCH' | 'INVALID_JUNCTION' | 'NESTED_TRIBUTARY' | 'ORPHANED_NODE' | 'INVALID_NODE_REF';
+  type: 'INVALID_PARENT_ID' | 'CYCLE_DETECTED' | 'PARENT_CHILD_MISMATCH' | 'INVALID_JUNCTION' | 'TREE_TOO_DEEP' | 'ORPHANED_NODE' | 'INVALID_NODE_REF';
   splineId: SplineId;
   message: string;
   details?: Record<string, unknown>;
@@ -122,14 +128,18 @@ export function validateNetwork(graph: RiverGraphV2): ValidationError[] {
       }
     }
 
-    // I5: Tree depth ≤ 1 (rivers with children cannot be tributaries)
-    if (spline.children.length > 0 && spline.parentId !== null) {
-      errors.push({
-        type: 'NESTED_TRIBUTARY',
-        splineId: splineId as SplineId,
-        message: `Spline ${splineId} has both children and a parent (nested tributaries not allowed)`,
-        details: { parentId: spline.parentId, children: spline.children }
-      });
+    // I5: Tree depth ≤ 2 (River → Tributary → Stream hierarchy)
+    // Only check depth from root nodes (parentId === null)
+    if (spline.parentId === null && spline.children.length > 0) {
+      const depth = getTreeDepth(graph, splineId as SplineId);
+      if (depth > 2) {
+        errors.push({
+          type: 'TREE_TOO_DEEP',
+          splineId: splineId as SplineId,
+          message: `River ${splineId} has tree depth ${depth}, but maximum allowed is 2 (River → Tributary → Stream)`,
+          details: { depth, maxAllowed: 2, children: spline.children }
+        });
+      }
     }
 
     // Validate node references
