@@ -262,16 +262,31 @@ export function canMergeSplines(
     return false;
   }
 
-  const [draggedSplineId] = draggedEntry;
-  const [targetSplineId] = targetEntry;
+  const [draggedSplineId, draggedSpline] = draggedEntry;
+  const [targetSplineId, targetSpline] = targetEntry;
 
   if (draggedSplineId === targetSplineId) {
     return false;
   }
 
-  // REMOVED: Children blocking check
-  // Rivers with tributaries CAN merge with other rivers
-  // The children (tributaries) will be transferred to the surviving spline
+  // I5: Enforce tree depth ≤ 1 (rivers with tributaries cannot merge)
+  // This maintains the invariant: children.length > 0 ⇒ parentId === null
+  if (draggedSpline.children.length > 0 || targetSpline.children.length > 0) {
+    return false;
+  }
+
+  // I1: Only independent rivers can merge (not tributaries)
+  if (draggedSpline.parentId !== null || targetSpline.parentId !== null) {
+    return false;
+  }
+
+  // I2: Prevent cycles - check that neither spline is descendant of the other
+  if (
+    isDescendantOf(graph, draggedSplineId as SplineId, targetSplineId as SplineId) ||
+    isDescendantOf(graph, targetSplineId as SplineId, draggedSplineId as SplineId)
+  ) {
+    return false;
+  }
 
   const draggedKind = getNodeKind(graph, draggedNodeId);
   const targetKind = getNodeKind(graph, targetNodeId);

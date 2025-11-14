@@ -11,9 +11,10 @@ import { makeWidthPx, makeWidthRelative, makeRiverAttributes } from '@/core/grap
 import GraphService from '@services/GraphService';
 import { useActionLogger } from './useActionLogger';
 import { getNodeKind } from '@/core/graph/nodeKinds';
+import { assertNetworkValid } from '@/core/graph/invariants';
 
 export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
-  const [riverGraph, setRiverGraph] = useState<RiverGraphV2>(
+  const [riverGraph, setRiverGraphInternal] = useState<RiverGraphV2>(
     initialGraph || GraphService.createEmpty()
   );
   const [activeSplineId, setActiveSplineId] = useState<SplineId | null>(null);
@@ -24,6 +25,15 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
 
   // Action logger for debugging
   const actionLogger = useActionLogger(true);
+
+  /**
+   * Wrapper for setRiverGraph that validates invariants in dev mode
+   * Note: This now validates the graph after every state change in development
+   */
+  const setRiverGraph = useCallback((newGraph: RiverGraphV2) => {
+    assertNetworkValid(newGraph);
+    setRiverGraphInternal(newGraph);
+  }, []);
 
   /**
    * Gets context about the currently selected node for logging
