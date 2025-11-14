@@ -25,7 +25,7 @@ import type {
   RiverAttributes,
 } from './types';
 import { makeNodeId, makeSplineId } from './types';
-import { computeNodeKind } from './nodeKinds';
+import { computeNodeKind, determineSplineKind } from './nodeKinds';
 import { generateId } from '../geometry/geometry';
 
 function cloneAttributes(attributes: RiverAttributes): RiverAttributes {
@@ -526,16 +526,24 @@ export function attachTributary(
     };
   }
 
-  // Update child spline
+  // Update child spline with correct kind based on hierarchy
+  const updatedChild = {
+    ...childSpline,
+    nodeIds: newNodeIds,
+    parentId: parentSplineId,
+    parentJunction: junctionNodeId,
+    isIndependent: false,
+    isDetached: false,
+  };
+
+  // Temporarily add to graph to determine kind
+  newGraph.splines[childSplineId] = updatedChild;
+  const correctKind = determineSplineKind(newGraph, childSplineId);
+
   newGraph.splines[childSplineId] = applyAttributesToSpline(
     {
-      ...childSpline,
-      kind: 'tributary',
-      nodeIds: newNodeIds,
-      parentId: parentSplineId,
-      parentJunction: junctionNodeId,
-      isIndependent: false,
-      isDetached: false,
+      ...updatedChild,
+      kind: correctKind, // 'tributary' or 'stream' based on parent's level
     },
     {
       ...childSpline.attributes,
@@ -1132,16 +1140,24 @@ export function attachSplineAsTributary(
     };
   }
 
-  // Update dragged spline to be tributary
+  // Update dragged spline with correct kind based on hierarchy
+  const updatedDraggedSpline = {
+    ...draggedSpline,
+    parentId: targetSplineId,
+    parentJunction: targetNodeId,
+    nodeIds: tributaryNodeIds,
+    isIndependent: false,
+    isDetached: false,
+  };
+
+  // Temporarily add to graph to determine kind
+  newGraph.splines[draggedSplineId] = updatedDraggedSpline;
+  const correctKind = determineSplineKind(newGraph, draggedSplineId);
+
   newGraph.splines[draggedSplineId] = applyAttributesToSpline(
     {
-      ...draggedSpline,
-      kind: 'tributary',
-      parentId: targetSplineId,
-      parentJunction: targetNodeId,
-      nodeIds: tributaryNodeIds,
-      isIndependent: false,
-      isDetached: false,
+      ...updatedDraggedSpline,
+      kind: correctKind, // 'tributary' or 'stream' based on target's level
     },
     {
       ...draggedSpline.attributes,
