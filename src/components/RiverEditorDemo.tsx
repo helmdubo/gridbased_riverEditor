@@ -836,133 +836,128 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         </label>
       </div>
 
-      {/* Info & Debugger */}
+      {/* New River Button */}
       <div style={{
-        padding: '15px',
-        backgroundColor: '#2a2a2a',
-        borderRadius: '8px',
-        fontSize: '13px',
+        display: 'flex',
+        justifyContent: 'flex-end',
+        padding: '0',
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div style={{ flex: 1 }}>
-            <strong>Instructions:</strong>
-            <ul style={{ margin: '5px 0 0 0', paddingLeft: '20px', fontSize: '12px' }}>
-              <li>Click on canvas to add/extend nodes</li>
-              <li>Drag nodes to reposition them</li>
-              <li><strong>Double-click</strong> on node to delete it</li>
-              <li>Select <strong>source/mouth</strong> node then click to <strong>extend</strong></li>
-              <li>Select mid-node to <strong>insert</strong> or create <strong>tributary</strong></li>
-            </ul>
-          </div>
+        <button
+          onClick={handleCreateNewRiver}
+          style={{
+            padding: '8px 16px',
+            backgroundColor: '#059669',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            fontSize: '13px',
+            fontWeight: 'bold',
+          }}
+        >
+          🆕 New River
+        </button>
+      </div>
 
-          <button
-            onClick={handleCreateNewRiver}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: '#059669',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '13px',
-              fontWeight: 'bold',
-            }}
-          >
-            🆕 New River
-          </button>
+      {/* Graph State Debugger - Positioned as Semi-transparent Overlay */}
+      <div style={{
+        position: 'fixed',
+        top: '20px',
+        right: '20px',
+        padding: '15px',
+        backgroundColor: 'rgba(26, 26, 26, 0.85)',
+        backdropFilter: 'blur(10px)',
+        borderRadius: '8px',
+        border: '1px solid rgba(255, 255, 255, 0.1)',
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        lineHeight: '1.6',
+        minWidth: '300px',
+        maxWidth: '400px',
+        maxHeight: '80vh',
+        overflowY: 'auto',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
+        zIndex: 1000,
+        color: '#fff',
+      }}>
+        <strong style={{ color: '#10b981' }}>Graph State:</strong>
+        <div style={{ marginLeft: '10px', marginTop: '5px' }}>
+          <div>Total Nodes: <span style={{ color: '#fbbf24' }}>{Object.keys(riverGraph.nodes).length}</span></div>
+          <div>Total Splines: <span style={{ color: '#fbbf24' }}>{Object.keys(riverGraph.splines).length}</span></div>
+          <div>Main River: <span style={{ color: '#fbbf24' }}>{hasMainRiver ? 'Yes' : 'No'}</span></div>
         </div>
 
-        <div style={{
-          marginTop: '15px',
-          padding: '12px',
-          backgroundColor: '#1a1a1a',
-          borderRadius: '4px',
-          fontFamily: 'monospace',
-          fontSize: '12px',
-          lineHeight: '1.6',
-          minHeight: '240px',
-          maxHeight: '260px',
-          overflowY: 'auto',
-        }}>
-          <strong style={{ color: '#10b981' }}>Graph State:</strong>
-          <div style={{ marginLeft: '10px', marginTop: '5px' }}>
-            <div>Total Nodes: <span style={{ color: '#fbbf24' }}>{Object.keys(riverGraph.nodes).length}</span></div>
-            <div>Total Splines: <span style={{ color: '#fbbf24' }}>{Object.keys(riverGraph.splines).length}</span></div>
-            <div>Main River: <span style={{ color: '#fbbf24' }}>{hasMainRiver ? 'Yes' : 'No'}</span></div>
-          </div>
-
-          {(() => {
-            const info = getSelectedNodeInfo();
-            if (!info) {
-              return (
-                <div style={{ marginTop: '10px', color: '#888' }}>
-                  No node selected
-                </div>
-              );
-            }
-
-            const spline = info.spline;
-            const isMainRiver = spline.isMain;
-
+        {(() => {
+          const info = getSelectedNodeInfo();
+          if (!info) {
             return (
-              <div style={{ marginTop: '10px' }}>
-                <strong style={{ color: '#3b82f6' }}>Selected Node:</strong>
-                <div style={{ marginLeft: '10px', marginTop: '5px' }}>
-                  <div>ID: <span style={{ color: '#a855f7' }}>{selectedNodeId?.slice(0, 8)}...</span></div>
-                  <div>Type: <span style={{ color: '#ef4444' }}>{info.nodeType}</span></div>
-                  <div>Position: <span style={{ color: '#fbbf24' }}>{info.nodeIndex + 1}/{info.totalNodes}</span></div>
-                </div>
-
-                <div style={{ marginTop: '8px' }}>
-                  <strong style={{ color: '#3b82f6' }}>Spline (River):</strong>
-                  <div style={{ marginLeft: '10px', marginTop: '5px' }}>
-                    <div>ID: <span style={{ color: '#a855f7' }}>{spline.id.slice(0, 8)}...</span></div>
-                    <div>Kind: <span style={{ color: '#10b981' }}>{spline.kind}</span> {isMainRiver && '(main)'}</div>
-                    <div>Nodes: <span style={{ color: '#fbbf24' }}>{spline.nodeIds.length}</span></div>
-                    <div>
-                      Width:
-                      <span style={{ color: '#fbbf24' }}>
-                        {(() => {
-                          const widthSpec = spline.attributes?.width ?? spline.width;
-                          if (!widthSpec) {
-                            return '—';
-                          }
-                          return widthSpec.kind === 'px'
-                            ? `${widthSpec.value}px`
-                            : `${widthSpec.value}%`;
-                        })()}
-                      </span>
-                    </div>
-                    {spline.parentId && (
-                      <>
-                        <div>Parent: <span style={{ color: '#a855f7' }}>{spline.parentId.slice(0, 8)}...</span></div>
-                        <div>Junction: <span style={{ color: '#a855f7' }}>{spline.parentJunction?.slice(0, 8)}...</span></div>
-                      </>
-                    )}
-                    {spline.children.length > 0 && (
-                      <div>Children: <span style={{ color: '#10b981' }}>{spline.children.length} tributary(ies)</span></div>
-                    )}
-                  </div>
-                </div>
-
-                {spline.children.length > 0 && (
-                  <div style={{ marginTop: '8px' }}>
-                    <strong style={{ color: '#10b981' }}>Tributaries:</strong>
-                    {spline.children.map((childId, idx) => {
-                      const childSpline = riverGraph.splines[childId];
-                      if (!childSpline) return null;
-                      return (
-                        <div key={childId} style={{ marginLeft: '10px', marginTop: '3px', color: '#888' }}>
-                          {idx + 1}. {childId.slice(0, 8)}... ({childSpline.nodeIds.length} nodes)
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+              <div style={{ marginTop: '10px', color: '#888' }}>
+                No node selected
               </div>
             );
-          })()}
-        </div>
+          }
+
+          const spline = info.spline;
+          const isMainRiver = spline.isMain;
+
+          return (
+            <div style={{ marginTop: '10px' }}>
+              <strong style={{ color: '#3b82f6' }}>Selected Node:</strong>
+              <div style={{ marginLeft: '10px', marginTop: '5px' }}>
+                <div>ID: <span style={{ color: '#a855f7' }}>{selectedNodeId?.slice(0, 8)}...</span></div>
+                <div>Type: <span style={{ color: '#ef4444' }}>{info.nodeType}</span></div>
+                <div>Position: <span style={{ color: '#fbbf24' }}>{info.nodeIndex + 1}/{info.totalNodes}</span></div>
+              </div>
+
+              <div style={{ marginTop: '8px' }}>
+                <strong style={{ color: '#3b82f6' }}>Spline (River):</strong>
+                <div style={{ marginLeft: '10px', marginTop: '5px' }}>
+                  <div>ID: <span style={{ color: '#a855f7' }}>{spline.id.slice(0, 8)}...</span></div>
+                  <div>Kind: <span style={{ color: '#10b981' }}>{spline.kind}</span> {isMainRiver && '(main)'}</div>
+                  <div>Nodes: <span style={{ color: '#fbbf24' }}>{spline.nodeIds.length}</span></div>
+                  <div>
+                    Width:
+                    <span style={{ color: '#fbbf24' }}>
+                      {(() => {
+                        const widthSpec = spline.attributes?.width ?? spline.width;
+                        if (!widthSpec) {
+                          return '—';
+                        }
+                        return widthSpec.kind === 'px'
+                          ? `${widthSpec.value}px`
+                          : `${widthSpec.value}%`;
+                      })()}
+                    </span>
+                  </div>
+                  {spline.parentId && (
+                    <>
+                      <div>Parent: <span style={{ color: '#a855f7' }}>{spline.parentId.slice(0, 8)}...</span></div>
+                      <div>Junction: <span style={{ color: '#a855f7' }}>{spline.parentJunction?.slice(0, 8)}...</span></div>
+                    </>
+                  )}
+                  {spline.children.length > 0 && (
+                    <div>Children: <span style={{ color: '#10b981' }}>{spline.children.length} tributary(ies)</span></div>
+                  )}
+                </div>
+              </div>
+
+              {spline.children.length > 0 && (
+                <div style={{ marginTop: '8px' }}>
+                  <strong style={{ color: '#10b981' }}>Tributaries:</strong>
+                  {spline.children.map((childId, idx) => {
+                    const childSpline = riverGraph.splines[childId];
+                    if (!childSpline) return null;
+                    return (
+                      <div key={childId} style={{ marginLeft: '10px', marginTop: '3px', color: '#888' }}>
+                        {idx + 1}. {childId.slice(0, 8)}... ({childSpline.nodeIds.length} nodes)
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Canvas + Overlay */}
