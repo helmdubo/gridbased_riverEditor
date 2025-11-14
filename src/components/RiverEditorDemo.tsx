@@ -10,6 +10,7 @@ import { useRiverGraphV2 } from '@hooks/useRiverGraphV2';
 import { useRiverRendererV2 } from '@hooks/useRiverRendererV2';
 import { useInteractionLogger } from '@hooks/useInteractionLogger';
 import { RiverOverlay } from './RiverEditor/RiverOverlay';
+import { ActionLogPanel } from './ActionLog/ActionLogPanel';
 import { DEFAULT_GRID_SIZE, DEFAULT_MAIN_RIVERBED_WIDTH, DEFAULT_RIVER_TYPE, SNAP_DISTANCE, SPLINE_SNAP_DISTANCE } from '@domain/constants';
 import type { RiverType } from '@domain/models/types';
 import GraphService from '@services/GraphService';
@@ -29,6 +30,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
   const [riverType, setRiverType] = useState<RiverType>(DEFAULT_RIVER_TYPE);
   const [showFlowMap, setShowFlowMap] = useState(false);
   const [showFlowArrows, setShowFlowArrows] = useState(false);
+  const [showEchoLog, setShowEchoLog] = useState(false);
   const [widthControlMode, setWidthControlMode] = useState<'px' | 'percent'>('px');
   const [widthControlValue, setWidthControlValue] = useState(DEFAULT_MAIN_RIVERBED_WIDTH);
   const [newTributaryWidthPercent, setNewTributaryWidthPercent] = useState(50);
@@ -87,6 +89,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
     mergeNodes,
     attachSplineAsTributary,
     mergeSplines,
+    actionLogger,
   } = useRiverGraphV2();
 
   // Interaction logger for debugging
@@ -775,27 +778,49 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         padding: '15px',
         backgroundColor: '#2a2a2a',
         borderRadius: '8px',
+        alignItems: 'flex-start',
       }}>
-        <label style={{ flex: '0 0 auto' }}>
-          Active Width: {widthControlValue}
-          {widthControlMode === 'px' ? 'px' : '%'}
-          <input
-            type="range"
-            min={widthControlMode === 'px' ? 20 : 5}
-            max={widthControlMode === 'px' ? 180 : 100}
-            step={1}
-            value={widthControlValue}
-            onChange={(e) => handleWidthSliderChange(Number(e.target.value))}
-            disabled={sliderDisabled}
-            style={{ display: 'block', width: '220px', opacity: sliderDisabled ? 0.5 : 1 }}
-          />
-          {!activeSpline && (
-            <span style={{ display: 'block', marginTop: '4px', color: '#888', fontSize: '11px' }}>
-              Select a river or tributary node to adjust its width
-            </span>
-          )}
-        </label>
+        {/* Left column: Width and New River */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <label style={{ flex: '0 0 auto' }}>
+            Active Width: {widthControlValue}
+            {widthControlMode === 'px' ? 'px' : '%'}
+            <input
+              type="range"
+              min={widthControlMode === 'px' ? 20 : 5}
+              max={widthControlMode === 'px' ? 180 : 100}
+              step={1}
+              value={widthControlValue}
+              onChange={(e) => handleWidthSliderChange(Number(e.target.value))}
+              disabled={sliderDisabled}
+              style={{ display: 'block', width: '220px', opacity: sliderDisabled ? 0.5 : 1 }}
+            />
+            {!activeSpline && (
+              <span style={{ display: 'block', marginTop: '4px', color: '#888', fontSize: '11px' }}>
+                Select a river or tributary node to adjust its width
+              </span>
+            )}
+          </label>
 
+          <button
+            onClick={handleCreateNewRiver}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: '#059669',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: 'bold',
+              alignSelf: 'flex-start',
+            }}
+          >
+            🆕 New River
+          </button>
+        </div>
+
+        {/* Middle column: River Type */}
         <label>
           River Type:
           <select
@@ -817,46 +842,35 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
           </select>
         </label>
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <input
-            type="checkbox"
-            checked={showFlowMap}
-            onChange={(e) => setShowFlowMap(e.target.checked)}
-          />
-          Show Flow Map
-        </label>
+        {/* Right column: Checkboxes */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="checkbox"
+              checked={showFlowMap}
+              onChange={(e) => setShowFlowMap(e.target.checked)}
+            />
+            Show Flow Map
+          </label>
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <input
-            type="checkbox"
-            checked={showFlowArrows}
-            onChange={(e) => setShowFlowArrows(e.target.checked)}
-          />
-          Show Flow Arrows
-        </label>
-      </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="checkbox"
+              checked={showFlowArrows}
+              onChange={(e) => setShowFlowArrows(e.target.checked)}
+            />
+            Show Flow Arrows
+          </label>
 
-      {/* New River Button */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'flex-end',
-        padding: '0',
-      }}>
-        <button
-          onClick={handleCreateNewRiver}
-          style={{
-            padding: '8px 16px',
-            backgroundColor: '#059669',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer',
-            fontSize: '13px',
-            fontWeight: 'bold',
-          }}
-        >
-          🆕 New River
-        </button>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="checkbox"
+              checked={showEchoLog}
+              onChange={(e) => setShowEchoLog(e.target.checked)}
+            />
+            📋 Echo Log
+          </label>
+        </div>
       </div>
 
       {/* Graph State Debugger - Positioned as Semi-transparent Overlay */}
@@ -1002,6 +1016,15 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
           onTributaryPointDoubleClick={handleTributaryPointDoubleClick}
         />
       </div>
+
+      {/* Echo Log Panel */}
+      {showEchoLog && (
+        <ActionLogPanel
+          logs={actionLogger.getLogs()}
+          onClear={actionLogger.clearLogs}
+          onExport={actionLogger.exportLogs}
+        />
+      )}
     </div>
   );
 };

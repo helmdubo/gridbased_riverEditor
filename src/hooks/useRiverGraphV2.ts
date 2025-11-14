@@ -701,5 +701,8 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
     tributaries: GraphService.getTributaries(riverGraph),
     junctionNodes: GraphService.findJunctionNodes(riverGraph),
     activeSpline: resolveActiveSpline(),
+
+    // Action logger (for debugging)
+    actionLogger,
   };
 };
