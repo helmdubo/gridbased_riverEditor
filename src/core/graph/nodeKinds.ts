@@ -262,16 +262,16 @@ export function canMergeSplines(
     return false;
   }
 
-  const [draggedSplineId, draggedSpline] = draggedEntry;
+  const [draggedSplineId] = draggedEntry;
   const [targetSplineId] = targetEntry;
 
   if (draggedSplineId === targetSplineId) {
     return false;
   }
 
-  if (draggedSpline.children && draggedSpline.children.length > 0) {
-    return false;
-  }
+  // REMOVED: Children blocking check
+  // Rivers with tributaries CAN merge with other rivers
+  // The children (tributaries) will be transferred to the surviving spline
 
   const draggedKind = getNodeKind(graph, draggedNodeId);
   const targetKind = getNodeKind(graph, targetNodeId);
@@ -298,7 +298,7 @@ function isDescendantOf(graph: RiverGraphV2, splineId: SplineId, ancestorId: Spl
   }
 
   // Check direct children
-  if (spline.children.includes(ancestorId as string)) {
+  if (spline.children.includes(ancestorId)) {
     return true;
   }
 

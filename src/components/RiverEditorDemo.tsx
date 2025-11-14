@@ -17,7 +17,7 @@ import GraphService from '@services/GraphService';
 import type { NodeId, SplineId, Spline } from '@/core/graph/types';
 import { makeNodeId } from '@/core/graph/types';
 import { findTributarySnapTarget, type SnapTargetNode, type SplineSnapResult } from '@/core/graph/snapping';
-import { canMergeNodes, getMergeSurvivor, canAttachAsTributary, canMergeSplines } from '@/core/graph/nodeKinds';
+import { canMergeNodes, getMergeSurvivor, canAttachAsTributary, canMergeSplines, getNodeKind } from '@/core/graph/nodeKinds';
 
 interface RiverEditorDemoProps {
   cols: number;
@@ -694,6 +694,29 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         else {
           console.log('🚫 Cannot perform any operation on these nodes');
         }
+      } else if (actualDraggedId) {
+        // No snap target - just a normal move, log it
+        const node = riverGraph.nodes[actualDraggedId];
+        if (node) {
+          // Get selected node info (if different from dragged node)
+          const selectedNodeInfo = selectedNodeId && selectedNodeId !== actualDraggedId ? {
+            id: selectedNodeId,
+            kind: getNodeKind(riverGraph, selectedNodeId),
+          } : null;
+
+          actionLogger.log(
+            'MOVE_NODE',
+            `Move node ${actualDraggedId.slice(0, 8)}... to (${Math.round(node.x)}, ${Math.round(node.y)})`,
+            riverGraph,
+            riverGraph, // Graph is already updated during drag
+            {
+              nodeId: actualDraggedId,
+              x: node.x,
+              y: node.y,
+              selectedNode: selectedNodeInfo,
+            }
+          );
+        }
       }
 
       // Clear snap highlights
@@ -708,7 +731,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         wasDraggingRef.current = false;
       }, 50);
     }
-  }, [draggingPointId, draggingTributaryInfo, snapTargetNode, riverGraph, mergeNodes, mergeSplines, attachSplineAsTributary]);
+  }, [draggingPointId, draggingTributaryInfo, snapTargetNode, riverGraph, mergeNodes, mergeSplines, attachSplineAsTributary, actionLogger]);
 
   const handleOverlayMouseLeave = useCallback(() => {
     if (draggingPointId || draggingTributaryInfo) {
