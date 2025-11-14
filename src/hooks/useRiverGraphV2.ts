@@ -329,15 +329,16 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
           return;
         }
 
-        const isTributary = activeSpline.kind === 'tributary';
+        // Treat both 'tributary' and 'stream' the same way (both are attached children)
+        const isAttachedChild = activeSpline.parentId !== null;
         const selectedIndex = selectedNodeId
           ? activeSpline.nodeIds.indexOf(selectedNodeId as string)
           : -1;
         const isSource = selectedIndex === 0;
         const isMouth = selectedIndex === activeSpline.nodeIds.length - 1;
 
-        if (isTributary) {
-          console.log('🌿 Editing tributary spline');
+        if (isAttachedChild) {
+          console.log('🌿 Editing attached child spline (tributary or stream)');
 
           if (isSource || selectedIndex === -1) {
             console.log('⬆️ Extending tributary upstream (away from junction)');
@@ -353,7 +354,8 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
                 y,
                 nodeId: result.nodeId,
                 splineId: resolvedActiveId,
-                isTributary: true,
+                isAttachedChild: true,
+                kind: activeSpline.kind,
                 parentJunction: activeSpline.parentJunction,
                 selectedNode: getSelectedNodeContext(),
               }
@@ -364,7 +366,7 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
             return;
           }
 
-          console.log('🚫 Tributaries can only grow from their source');
+          console.log('🚫 Attached children (tributaries/streams) can only grow from their source');
           return;
         }
 
