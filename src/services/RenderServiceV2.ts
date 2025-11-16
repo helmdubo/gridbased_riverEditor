@@ -19,7 +19,7 @@ import type { Point } from '@/core/geometry/geometry';
 import type { FlowField } from './FlowService';
 import type { SplineSnapInfo, SegmentInfo, InsertPointPreview } from '@domain/models/types';
 import { distanceToCurve } from '@domain/utils';
-import { MARCHING_SQUARES_CASES, COLORS, DEFAULT_MAIN_RIVERBED_WIDTH } from '@domain/constants';
+import { MARCHING_SQUARES_CASES, COLORS, DEFAULT_MAIN_RIVERBED_WIDTH, SMALL_CELL_SIZE, MIDDLE_CELL_SIZE, SMALL_CELLS_PER_MIDDLE } from '@domain/constants';
 
 export interface RenderOptionsV2 {
   showFlowMap: boolean;
@@ -139,20 +139,26 @@ export class RenderServiceV2 {
 
   /**
    * Get marching squares case for a cell
+   *
+   * @param col - Column index in small cells
+   * @param row - Row index in small cells
+   * @param cellSize - Size of a single small cell (SMALL_CELL_SIZE)
+   * @param allCurves - River curves to check
+   * @returns Marching squares case index (0-15)
    */
   private static getMarchingSquaresCase(
     col: number,
     row: number,
-    gridSize: number,
+    cellSize: number,
     allCurves: CurveData[]
   ): number {
-    const cellX = col * gridSize;
-    const cellY = row * gridSize;
+    const cellX = col * cellSize;
+    const cellY = row * cellSize;
     const corners = [
       { x: cellX, y: cellY },
-      { x: cellX + gridSize, y: cellY },
-      { x: cellX + gridSize, y: cellY + gridSize },
-      { x: cellX, y: cellY + gridSize },
+      { x: cellX + cellSize, y: cellY },
+      { x: cellX + cellSize, y: cellY + cellSize },
+      { x: cellX, y: cellY + cellSize },
     ];
 
     let caseIndex = 0;
@@ -172,6 +178,18 @@ export class RenderServiceV2 {
 
   /**
    * Render grid with marching squares
+   *
+   * Two-level grid system:
+   * - Middle cells (48px): Visual grid lines shown to user
+   * - Small cells (16px): Internal grid for precise contour calculations (3x3 per middle cell)
+   *
+   * @param ctx - Canvas rendering context
+   * @param cols - Number of middle cells horizontally
+   * @param rows - Number of middle cells vertically
+   * @param gridSize - Size of middle cell (MIDDLE_CELL_SIZE = 48px)
+   * @param allCurves - River curves to render
+   * @param flowField - Flow field data (based on middle cells)
+   * @param options - Rendering options
    */
   static renderGrid(
     ctx: CanvasRenderingContext2D,
@@ -182,26 +200,34 @@ export class RenderServiceV2 {
     flowField: FlowField | null,
     options: RenderOptionsV2
   ): void {
+    // Calculate small cell grid dimensions
+    const smallCols = cols * SMALL_CELLS_PER_MIDDLE;
+    const smallRows = rows * SMALL_CELLS_PER_MIDDLE;
+
     // Clear canvas
     ctx.clearRect(0, 0, cols * gridSize, rows * gridSize);
     ctx.fillStyle = COLORS.BACKGROUND;
     ctx.fillRect(0, 0, cols * gridSize, rows * gridSize);
 
-    // Draw cells with terrain types
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        const x = col * gridSize;
-        const y = row * gridSize;
+    // Draw cells with terrain types using small cell precision
+    for (let smallRow = 0; smallRow < smallRows; smallRow++) {
+      for (let smallCol = 0; smallCol < smallCols; smallCol++) {
+        const x = smallCol * SMALL_CELL_SIZE;
+        const y = smallRow * SMALL_CELL_SIZE;
 
         if (allCurves.length === 0) continue;
 
-        const caseIndex = this.getMarchingSquaresCase(col, row, gridSize, allCurves);
+        const caseIndex = this.getMarchingSquaresCase(smallCol, smallRow, SMALL_CELL_SIZE, allCurves);
         const landBits =
           ((caseIndex >> 0) & 1) + ((caseIndex >> 1) & 1) + ((caseIndex >> 2) & 1) + ((caseIndex >> 3) & 1);
         const waterBits = 4 - landBits;
 
+        // Map small cell to middle cell for flow field check
+        const middleCol = Math.floor(smallCol / SMALL_CELLS_PER_MIDDLE);
+        const middleRow = Math.floor(smallRow / SMALL_CELLS_PER_MIDDLE);
+        const isWaterCell = flowField ? flowField.waterMask[middleRow][middleCol] : false;
+
         let fillColor = 'transparent';
-        const isWaterCell = flowField ? flowField.waterMask[row][col] : false;
 
         if (waterBits > 0 && !(options.showFlowMap && isWaterCell)) {
           if (waterBits === 4) fillColor = COLORS.WATER_FULL;
@@ -213,23 +239,23 @@ export class RenderServiceV2 {
 
         if (fillColor !== 'transparent') {
           ctx.fillStyle = fillColor;
-          ctx.fillRect(x, y, gridSize, gridSize);
+          ctx.fillRect(x, y, SMALL_CELL_SIZE, SMALL_CELL_SIZE);
         }
       }
     }
 
-    // Draw flow map
+    // Draw flow map (uses middle cell grid)
     if (options.showFlowMap && flowField) {
       this.renderFlowMap(ctx, flowField, gridSize);
     }
 
-    // Draw flow arrows
+    // Draw flow arrows (uses middle cell grid)
     if (options.showFlowArrows && flowField) {
       this.renderFlowArrows(ctx, flowField, gridSize, options);
     }
 
-    // Draw grid lines and contours
-    this.renderContours(ctx, cols, rows, gridSize, allCurves);
+    // Draw grid lines and contours (middle cell visual grid + small cell contours)
+    this.renderContours(ctx, cols, rows, smallCols, smallRows, allCurves);
 
     // Draw flow map legend
     if (options.showFlowMap) {
@@ -330,40 +356,58 @@ export class RenderServiceV2 {
 
   /**
    * Render contours with marching squares
+   *
+   * Draws two layers:
+   * 1. Visual grid lines using middle cells (48px) - shown to user
+   * 2. Precise contours using small cells (16px) - for accurate terrain boundaries
+   *
+   * @param ctx - Canvas rendering context
+   * @param middleCols - Number of middle cells horizontally
+   * @param middleRows - Number of middle cells vertically
+   * @param smallCols - Number of small cells horizontally
+   * @param smallRows - Number of small cells vertically
+   * @param allCurves - River curves to check
    */
   private static renderContours(
     ctx: CanvasRenderingContext2D,
-    cols: number,
-    rows: number,
-    gridSize: number,
+    middleCols: number,
+    middleRows: number,
+    smallCols: number,
+    smallRows: number,
     allCurves: CurveData[]
   ): void {
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        const x = col * gridSize;
-        const y = row * gridSize;
+    // Draw visual grid lines (middle cells)
+    ctx.strokeStyle = COLORS.GRID_LINE;
+    ctx.lineWidth = 1;
+    for (let row = 0; row < middleRows; row++) {
+      for (let col = 0; col < middleCols; col++) {
+        const x = col * MIDDLE_CELL_SIZE;
+        const y = row * MIDDLE_CELL_SIZE;
+        ctx.strokeRect(x, y, MIDDLE_CELL_SIZE, MIDDLE_CELL_SIZE);
+      }
+    }
 
-        // Draw grid lines
-        ctx.strokeStyle = COLORS.GRID_LINE;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, gridSize, gridSize);
+    if (allCurves.length === 0) return;
 
-        if (allCurves.length === 0) continue;
+    // Draw precise contours (small cells)
+    ctx.strokeStyle = COLORS.CONTOUR;
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
 
-        // Draw contours
-        const caseIndex = this.getMarchingSquaresCase(col, row, gridSize, allCurves);
+    for (let smallRow = 0; smallRow < smallRows; smallRow++) {
+      for (let smallCol = 0; smallCol < smallCols; smallCol++) {
+        const x = smallCol * SMALL_CELL_SIZE;
+        const y = smallRow * SMALL_CELL_SIZE;
+
+        const caseIndex = this.getMarchingSquaresCase(smallCol, smallRow, SMALL_CELL_SIZE, allCurves);
         const contourSegments = MARCHING_SQUARES_CASES[caseIndex];
 
         if (contourSegments && contourSegments.length > 0) {
-          ctx.strokeStyle = COLORS.CONTOUR;
-          ctx.lineWidth = 2.5;
-          ctx.lineCap = 'round';
-
           contourSegments.forEach((segment) => {
             const [start, end] = segment;
             ctx.beginPath();
-            ctx.moveTo(x + start[0] * gridSize, y + start[1] * gridSize);
-            ctx.lineTo(x + end[0] * gridSize, y + end[1] * gridSize);
+            ctx.moveTo(x + start[0] * SMALL_CELL_SIZE, y + start[1] * SMALL_CELL_SIZE);
+            ctx.lineTo(x + end[0] * SMALL_CELL_SIZE, y + end[1] * SMALL_CELL_SIZE);
             ctx.stroke();
           });
         }

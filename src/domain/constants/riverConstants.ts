@@ -13,8 +13,18 @@ export const SNAP_DISTANCE = 25;
 /** Distance for spline snapping (in pixels) */
 export const SPLINE_SNAP_DISTANCE = 30;
 
-/** Default grid size (in pixels) */
-export const DEFAULT_GRID_SIZE = 50;
+/** Grid system - two-level hierarchy */
+/** Small cell size for precise contour calculations (in pixels) */
+export const SMALL_CELL_SIZE = 16;
+
+/** Middle cell size for visual grid display (in pixels) */
+export const MIDDLE_CELL_SIZE = 48;
+
+/** Number of small cells per middle cell (3x3 grid) */
+export const SMALL_CELLS_PER_MIDDLE = MIDDLE_CELL_SIZE / SMALL_CELL_SIZE; // = 3
+
+/** Default grid size (legacy, use MIDDLE_CELL_SIZE for new code) */
+export const DEFAULT_GRID_SIZE = MIDDLE_CELL_SIZE;
 
 /** Default number of segments for curve interpolation */
 export const DEFAULT_CURVE_SEGMENTS = 50;
