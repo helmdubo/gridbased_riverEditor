@@ -357,21 +357,50 @@ export function canAttachToNode(
     };
   }
 
-  // Find an attachable root river that owns this node (kind='river', parentId=null)
+  // Find spline that owns this node
   const owningSplines = Object.values(graph.splines).filter(
-    (spline) => spline.kind === 'river' && spline.parentId === null && spline.nodeIds.includes(nodeId as string)
+    (spline) => spline.nodeIds.includes(nodeId as string)
   );
 
   if (owningSplines.length === 0) {
     return {
       valid: false,
-      error: 'Cannot attach tributary: node is not part of an independent river',
+      error: 'Cannot attach tributary: node is not part of any spline',
+    };
+  }
+
+  const owningSpline = owningSplines.find((spline) => spline.isMain) || owningSplines[0];
+
+  // Check hierarchy level (0 = river, 1 = tributary, 2 = stream)
+  // Stream (level 2) cannot have children
+  let currentSpline = owningSpline;
+  let level = 0;
+  while (currentSpline.parentId !== null) {
+    level++;
+    const parent = graph.splines[currentSpline.parentId];
+    if (!parent) break;
+    currentSpline = parent as Spline;
+  }
+
+  // I5: Enforce depth ≤ 2 (River → Tributary → Stream)
+  // Level 2 (stream) cannot have children
+  if (level >= 2) {
+    return {
+      valid: false,
+      error: 'Cannot attach tributary: stream (level 2) cannot have children. Only rivers and tributaries can accept new branches.',
+    };
+  }
+
+  // Must be independent river or tributary (not already a child of someone else at level 2)
+  if (owningSpline.kind === 'stream') {
+    return {
+      valid: false,
+      error: 'Cannot attach tributary to stream spline',
     };
   }
 
   // Prevent attaching to endpoints of any owning river
-  const attachableSpline = owningSplines.find((spline) => spline.isMain) || owningSplines[0];
-  const nodeIndex = attachableSpline.nodeIds.indexOf(nodeId as string);
+  const nodeIndex = owningSpline.nodeIds.indexOf(nodeId as string);
 
   if (nodeIndex <= 0) {
     return {
@@ -380,7 +409,7 @@ export function canAttachToNode(
     };
   }
 
-  if (nodeIndex === attachableSpline.nodeIds.length - 1) {
+  if (nodeIndex === owningSpline.nodeIds.length - 1) {
     return {
       valid: false,
       error: 'Cannot attach to river mouth node',

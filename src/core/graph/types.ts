@@ -20,13 +20,16 @@ export type NodeId = string & { readonly __brand: 'NodeId' };
 export type SplineId = string & { readonly __brand: 'SplineId' };
 
 /**
- * Spline kind - distinguishes independent rivers from tributaries
- * 'river' = independent watercourse (may be highlighted as main via isMain flag)
- * 'tributary' = child watercourse attached to parent river
+ * Spline kind - hierarchical classification of watercourses
+ *
+ * Hierarchy (depth ≤ 2):
+ * - 'river' = Level 0: independent watercourse (parentId === null)
+ * - 'tributary' = Level 1: child attached to river (can have stream children)
+ * - 'stream' = Level 2: child attached to tributary (cannot have children)
  *
  * @ue_equivalent UENUM() in C++
  */
-export type SplineKind = 'river' | 'tributary';
+export type SplineKind = 'river' | 'tributary' | 'stream';
 
 /**
  * Direction of flow for a spline.

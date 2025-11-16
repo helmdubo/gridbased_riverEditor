@@ -7,7 +7,7 @@
  * @module core/graph/nodeKinds
  */
 
-import type { RiverGraphV2, NodeId, NodeKind, SplineId } from './types';
+import type { RiverGraphV2, NodeId, NodeKind, SplineId, Spline } from './types';
 
 /**
  * Priority levels for merge operations
@@ -36,44 +36,102 @@ function findSplinesContainingNode(graph: RiverGraphV2, nodeId: NodeId) {
 }
 
 /**
- * Derives node kind based on current topology
+ * Get all roles of a node (comprehensive classification)
+ *
+ * A node can have multiple roles simultaneously:
+ * - junction (belongs to 2+ splines)
+ * - source (first node in some spline)
+ * - mouth (last node in some spline)
+ * - inner (middle node in some spline)
+ *
+ * Example: After deleting first node of parent river:
+ *   River A: [n2] → [n3]  (n2 is source)
+ *              ↑
+ *   Tributary: [n4] → [n2] (n2 is mouth)
+ *   → n2 roles: junction=true, asSourceOf=[A], asMouthOf=[Tributary]
+ *
+ * @param graph - River graph
+ * @param nodeId - Node to analyze
+ * @returns Complete role information
+ */
+export interface NodeRoles {
+  /** Primary classification (used for UI icon priority) */
+  primary: NodeKind;
+  /** Is this node a junction (belongs to 2+ splines)? */
+  isJunction: boolean;
+  /** Splines where this node is the source (first node) */
+  asSourceOf: SplineId[];
+  /** Splines where this node is the mouth (last node) */
+  asMouthOf: SplineId[];
+  /** Splines where this node is inner (middle node) */
+  asInnerOf: SplineId[];
+}
+
+export function getNodeRoles(graph: RiverGraphV2, nodeId: NodeId): NodeRoles {
+  const containingSplines = findSplinesContainingNode(graph, nodeId);
+
+  const asSourceOf: SplineId[] = [];
+  const asMouthOf: SplineId[] = [];
+  const asInnerOf: SplineId[] = [];
+
+  for (const [splineId, spline] of containingSplines) {
+    const nodeIndex = spline.nodeIds.indexOf(nodeId as string);
+
+    if (nodeIndex === 0) {
+      asSourceOf.push(splineId as SplineId);
+    } else if (nodeIndex === spline.nodeIds.length - 1) {
+      asMouthOf.push(splineId as SplineId);
+    } else if (nodeIndex > 0) {
+      asInnerOf.push(splineId as SplineId);
+    }
+  }
+
+  const isJunction = containingSplines.length > 1;
+
+  // Determine primary kind (for backwards compatibility and UI priority)
+  let primary: NodeKind = 'inner';
+  if (isJunction) {
+    primary = 'junction';
+  } else if (asSourceOf.length > 0) {
+    primary = 'source';
+  } else if (asMouthOf.length > 0) {
+    primary = 'mouth';
+  } else if (asInnerOf.length > 0) {
+    primary = 'inner';
+  }
+
+  return {
+    primary,
+    isJunction,
+    asSourceOf,
+    asMouthOf,
+    asInnerOf,
+  };
+}
+
+/**
+ * Derives node kind based on current topology (LEGACY - prioritized classification)
+ *
+ * This function returns only ONE primary kind, using priority:
+ * junction > source > mouth > inner
+ *
+ * IMPORTANT: This loses information when a node has multiple roles!
+ * Example: node that is both source AND mouth AND junction will return only 'junction'.
+ *
+ * For complete role information, use getNodeRoles() instead.
  *
  * @param graph - River graph
  * @param nodeId - Node to classify
- * @returns Node kind classification
+ * @returns Primary node kind classification
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
  * static ERiverNodeKind DeriveNodeKind(const FRiverGraph& Graph, FGuid NodeId);
  */
 export function computeNodeKind(graph: RiverGraphV2, nodeId: NodeId): NodeKind {
-  const node = graph.nodes[nodeId];
-  if (!node) {
-    return 'inner';
-  }
-
-  const containingSplines = findSplinesContainingNode(graph, nodeId);
-
-  if (containingSplines.length === 0) {
-    return 'inner';
-  }
-
-  if (containingSplines.length > 1) {
-    return 'junction';
-  }
-
-  const [, spline] = containingSplines[0];
-  const nodeIndex = spline.nodeIds.indexOf(nodeId as string);
-
-  if (nodeIndex <= 0) {
-    return 'source';
-  }
-
-  if (nodeIndex === spline.nodeIds.length - 1) {
-    return 'mouth';
-  }
-
-  return 'inner';
+  // Use getNodeRoles for comprehensive analysis
+  const roles = getNodeRoles(graph, nodeId);
+  return roles.primary;
 }
 
 /**
@@ -108,6 +166,7 @@ export function getNodePriority(graph: RiverGraphV2, nodeId: NodeId): number {
  *
  * Merge rules:
  * - Must be in the same spline
+ * - Must be adjacent (neighbors in nodeIds array) to prevent loops
  * - Inner → anything: allowed (Inner is absorbed)
  * - Junction → Junction: forbidden
  * - Source → Source: forbidden
@@ -140,32 +199,53 @@ export function canMergeNodes(
     return false;
   }
 
-  const [draggedSplineId] = draggedEntry;
-  const [targetSplineId] = targetEntry;
+  const [draggedSplineId, draggedSpline] = draggedEntry;
+  const [targetSplineId, targetSpline] = targetEntry;
 
+  // Must be in the same spline
   if (draggedSplineId !== targetSplineId) {
+    return false;
+  }
+
+  // NEW: Check adjacency to prevent loops/twists
+  // Nodes must be neighbors in the nodeIds array
+  const draggedIndex = draggedSpline.nodeIds.indexOf(draggedNodeId as string);
+  const targetIndex = targetSpline.nodeIds.indexOf(targetNodeId as string);
+
+  if (draggedIndex === -1 || targetIndex === -1) {
+    return false;
+  }
+
+  const indexDistance = Math.abs(draggedIndex - targetIndex);
+  if (indexDistance !== 1) {
+    // Not adjacent - would create a loop or twist
     return false;
   }
 
   const draggedKind = getNodeKind(graph, draggedNodeId);
   const targetKind = getNodeKind(graph, targetNodeId);
 
+  // Inner nodes can merge with anything (they get absorbed)
   if (draggedKind === 'inner' || targetKind === 'inner') {
     return true;
   }
 
+  // Junction cannot merge with junction
   if (draggedKind === 'junction' && targetKind === 'junction') {
     return false;
   }
 
+  // Source cannot merge with source
   if (draggedKind === 'source' && targetKind === 'source') {
     return false;
   }
 
+  // Mouth cannot merge with mouth
   if (draggedKind === 'mouth' && targetKind === 'mouth') {
     return false;
   }
 
+  // Source and Mouth cannot merge (would collapse entire spline)
   if (
     (draggedKind === 'source' && targetKind === 'mouth') ||
     (draggedKind === 'mouth' && targetKind === 'source')
@@ -248,7 +328,27 @@ export function canMergeSplines(
     return false;
   }
 
-  if (draggedSpline.children && draggedSpline.children.length > 0) {
+  // I1: Only independent rivers can merge (not tributaries or streams)
+  if (draggedSpline.parentId !== null || targetSpline.parentId !== null) {
+    return false;
+  }
+
+  // I2: Prevent cycles - check that neither spline is descendant of the other
+  if (
+    isDescendantOf(graph, draggedSplineId as SplineId, targetSplineId as SplineId) ||
+    isDescendantOf(graph, targetSplineId as SplineId, draggedSplineId as SplineId)
+  ) {
+    return false;
+  }
+
+  // I5: Enforce tree depth ≤ 2 (River → Tributary → Stream)
+  // Rivers with children CAN merge, but result must not exceed depth 2
+  const draggedDepth = getTreeDepth(graph, draggedSplineId as SplineId);
+  const targetDepth = getTreeDepth(graph, targetSplineId as SplineId);
+  const maxDepth = Math.max(draggedDepth, targetDepth);
+
+  if (maxDepth > 2) {
+    // Cannot merge: resulting tree would be too deep
     return false;
   }
 
@@ -280,14 +380,73 @@ export function canMergeSplines(
 }
 
 /**
+ * Check if spline B is a descendant of spline A (direct or indirect child)
+ * This prevents creating cycles in the river hierarchy
+ */
+function isDescendantOf(graph: RiverGraphV2, splineId: SplineId, ancestorId: SplineId): boolean {
+  const spline = graph.splines[splineId];
+  if (!spline) {
+    return false;
+  }
+
+  // Check direct children
+  if (spline.children.includes(ancestorId)) {
+    return true;
+  }
+
+  // Check indirect descendants (recursive)
+  for (const childId of spline.children) {
+    if (isDescendantOf(graph, childId as SplineId, ancestorId)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Calculate the maximum tree depth from this spline downwards
+ *
+ * Depth calculation:
+ * - 0 = leaf node (no children)
+ * - 1 = has children that are all leaves
+ * - 2 = has children with children (grandchildren exist)
+ *
+ * @param graph - River graph
+ * @param splineId - Root spline to measure from
+ * @returns Maximum depth (0 = no children, 1 = has children, 2 = has grandchildren)
+ */
+export function getTreeDepth(graph: RiverGraphV2, splineId: SplineId): number {
+  const spline = graph.splines[splineId];
+  if (!spline || spline.children.length === 0) {
+    return 0; // Leaf node
+  }
+
+  // Find max depth among all children
+  let maxChildDepth = 0;
+  for (const childId of spline.children) {
+    const childDepth = getTreeDepth(graph, childId as SplineId);
+    maxChildDepth = Math.max(maxChildDepth, childDepth);
+  }
+
+  return 1 + maxChildDepth;
+}
+
+/**
  * Checks whether a dragged spline endpoint can attach as a tributary to the target node
+ *
+ * Hierarchy depth ≤ 2:
+ * - River (level 0) can accept Tributary (becomes level 1)
+ * - Tributary (level 1) can accept Stream (becomes level 2)
+ * - Stream (level 2) cannot accept children
  *
  * Conditions:
  * - Nodes must belong to different splines
- * - Dragged spline must be an independent river without children or parent
+ * - Dragged spline must be independent (not already attached)
  * - Dragged node must be an endpoint (source or mouth)
- * - Target spline must be an independent river
- * - Target node must not be the source node and must not already be a junction
+ * - Target hierarchy depth + dragged depth ≤ 2
+ * - Target node must not be source and must not be a junction
+ * - No cycles (target cannot be descendant of dragged)
  */
 export function canAttachAsTributary(
   graph: RiverGraphV2,
@@ -308,22 +467,22 @@ export function canAttachAsTributary(
   const [draggedSplineId, draggedSpline] = draggedEntry;
   const [targetSplineId, targetSpline] = targetEntry;
 
+  // Must be different splines
   if (draggedSplineId === targetSplineId) {
     return false;
   }
 
-  if (draggedSpline.children.length > 0) {
-    return false;
-  }
-
+  // Dragged spline must be independent (not already a tributary/stream)
   if (draggedSpline.parentId !== null) {
     return false;
   }
 
+  // Dragged spline must be a river (independent)
   if (draggedSpline.kind !== 'river') {
     return false;
   }
 
+  // Dragged node must be an endpoint
   const draggedIndex = draggedSpline.nodeIds.indexOf(draggedNodeId as string);
   if (draggedIndex === -1) {
     return false;
@@ -335,21 +494,77 @@ export function canAttachAsTributary(
     return false;
   }
 
-  if (targetSpline.parentId !== null) {
-    return false;
+  // Calculate target's hierarchy level (0 = river, 1 = tributary, 2 = stream)
+  let targetLevel = 0;
+  let currentSpline = targetSpline;
+  while (currentSpline.parentId !== null) {
+    targetLevel++;
+    const parent = graph.splines[currentSpline.parentId];
+    if (!parent) break;
+    currentSpline = parent as Spline;
   }
 
+  // Calculate dragged's tree depth (0 = no children, 1 = has children, 2 = has grandchildren)
+  const draggedDepth = getTreeDepth(graph, draggedSplineId as SplineId);
+
+  // I5: Enforce total depth ≤ 2
+  // If target is at level 1 (tributary) and dragged has children, result would be level 3
+  if (targetLevel + 1 + draggedDepth > 2) {
+    return false; // Would exceed maximum depth
+  }
+
+  // Target node must not be the source
   const targetIndex = targetSpline.nodeIds.indexOf(targetNodeId as string);
   if (targetIndex < 1) {
     return false;
   }
 
+  // Target node must not already be a junction
   const targetNode = graph.nodes[targetNodeId];
   if (targetNode?.kind === 'junction') {
     return false;
   }
 
+  // I2: Prevent cycles - target spline cannot be a descendant of dragged spline
+  if (isDescendantOf(graph, draggedSplineId as SplineId, targetSplineId as SplineId)) {
+    return false;
+  }
+
   return true;
+}
+
+/**
+ * Determine the correct kind (river/tributary/stream) for a spline based on hierarchy
+ *
+ * Hierarchy rules:
+ * - Level 0: parentId === null → 'river'
+ * - Level 1: parent is river (parent.parentId === null) → 'tributary'
+ * - Level 2: parent is tributary (parent.parentId !== null) → 'stream'
+ *
+ * @param graph - River graph
+ * @param splineId - Spline ID to classify
+ * @returns 'river', 'tributary', or 'stream'
+ */
+export function determineSplineKind(graph: RiverGraphV2, splineId: SplineId): 'river' | 'tributary' | 'stream' {
+  const spline = graph.splines[splineId];
+  if (!spline) {
+    return 'river'; // Fallback for non-existent spline
+  }
+
+  if (spline.parentId === null) {
+    return 'river'; // Level 0: independent river
+  }
+
+  const parent = graph.splines[spline.parentId];
+  if (!parent) {
+    return 'tributary'; // Fallback if parent missing
+  }
+
+  if (parent.parentId === null) {
+    return 'tributary'; // Level 1: child of river
+  }
+
+  return 'stream'; // Level 2: child of tributary
 }
 
 /**

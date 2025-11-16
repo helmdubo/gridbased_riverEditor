@@ -18,7 +18,7 @@ import GraphService from '@services/GraphService';
 import type { NodeId, SplineId, Spline } from '@/core/graph/types';
 import { makeNodeId } from '@/core/graph/types';
 import { findTributarySnapTarget, type SnapTargetNode, type SplineSnapResult } from '@/core/graph/snapping';
-import { canMergeNodes, getMergeSurvivor, canAttachAsTributary, canMergeSplines } from '@/core/graph/nodeKinds';
+import { canMergeNodes, getMergeSurvivor, canAttachAsTributary, canMergeSplines, getNodeKind } from '@/core/graph/nodeKinds';
 
 interface RiverEditorDemoProps {
   cols: number;
@@ -31,6 +31,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
   const [riverType, setRiverType] = useState<RiverType>(DEFAULT_RIVER_TYPE);
   const [showFlowMap, setShowFlowMap] = useState(false);
   const [showFlowArrows, setShowFlowArrows] = useState(false);
+  const [showEchoLog, setShowEchoLog] = useState(false);
   const [widthControlMode, setWidthControlMode] = useState<'px' | 'percent'>('px');
   const [widthControlValue, setWidthControlValue] = useState(DEFAULT_MAIN_RIVERBED_WIDTH);
   const [newTributaryWidthPercent, setNewTributaryWidthPercent] = useState(50);
@@ -89,6 +90,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
     mergeNodes,
     attachSplineAsTributary,
     mergeSplines,
+    actionLogger,
   } = useRiverGraphV2();
 
   // Interaction logger for debugging
@@ -696,6 +698,29 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         else {
           console.log('🚫 Cannot perform any operation on these nodes');
         }
+      } else if (actualDraggedId) {
+        // No snap target - just a normal move, log it
+        const node = riverGraph.nodes[actualDraggedId];
+        if (node) {
+          // Get selected node info (if different from dragged node)
+          const selectedNodeInfo = selectedNodeId && selectedNodeId !== actualDraggedId ? {
+            id: selectedNodeId,
+            kind: getNodeKind(riverGraph, selectedNodeId),
+          } : null;
+
+          actionLogger.log(
+            'MOVE_NODE',
+            `Move node ${actualDraggedId.slice(0, 8)}... to (${Math.round(node.x)}, ${Math.round(node.y)})`,
+            riverGraph,
+            riverGraph, // Graph is already updated during drag
+            {
+              nodeId: actualDraggedId,
+              x: node.x,
+              y: node.y,
+              selectedNode: selectedNodeInfo,
+            }
+          );
+        }
       }
 
       // Clear snap highlights
@@ -710,7 +735,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         wasDraggingRef.current = false;
       }, 50);
     }
-  }, [draggingPointId, draggingTributaryInfo, snapTargetNode, riverGraph, mergeNodes, mergeSplines, attachSplineAsTributary]);
+  }, [draggingPointId, draggingTributaryInfo, snapTargetNode, riverGraph, mergeNodes, mergeSplines, attachSplineAsTributary, actionLogger]);
 
   const handleOverlayMouseLeave = useCallback(() => {
     if (draggingPointId || draggingTributaryInfo) {
@@ -780,27 +805,49 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         padding: '15px',
         backgroundColor: '#2a2a2a',
         borderRadius: '8px',
+        alignItems: 'flex-start',
       }}>
-        <label style={{ flex: '0 0 auto' }}>
-          Active Width: {widthControlValue}
-          {widthControlMode === 'px' ? 'px' : '%'}
-          <input
-            type="range"
-            min={widthControlMode === 'px' ? 20 : 5}
-            max={widthControlMode === 'px' ? 180 : 100}
-            step={1}
-            value={widthControlValue}
-            onChange={(e) => handleWidthSliderChange(Number(e.target.value))}
-            disabled={sliderDisabled}
-            style={{ display: 'block', width: '220px', opacity: sliderDisabled ? 0.5 : 1 }}
-          />
-          {!activeSpline && (
-            <span style={{ display: 'block', marginTop: '4px', color: '#888', fontSize: '11px' }}>
-              Select a river or tributary node to adjust its width
-            </span>
-          )}
-        </label>
+        {/* Left column: Width and New River */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <label style={{ flex: '0 0 auto' }}>
+            Active Width: {widthControlValue}
+            {widthControlMode === 'px' ? 'px' : '%'}
+            <input
+              type="range"
+              min={widthControlMode === 'px' ? 20 : 5}
+              max={widthControlMode === 'px' ? 180 : 100}
+              step={1}
+              value={widthControlValue}
+              onChange={(e) => handleWidthSliderChange(Number(e.target.value))}
+              disabled={sliderDisabled}
+              style={{ display: 'block', width: '220px', opacity: sliderDisabled ? 0.5 : 1 }}
+            />
+            {!activeSpline && (
+              <span style={{ display: 'block', marginTop: '4px', color: '#888', fontSize: '11px' }}>
+                Select a river or tributary node to adjust its width
+              </span>
+            )}
+          </label>
 
+          <button
+            onClick={handleCreateNewRiver}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: '#059669',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: 'bold',
+              alignSelf: 'flex-start',
+            }}
+          >
+            🆕 New River
+          </button>
+        </div>
+
+        {/* Middle column: River Type */}
         <label>
           River Type:
           <select
@@ -822,31 +869,57 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
           </select>
         </label>
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <input
-            type="checkbox"
-            checked={showFlowMap}
-            onChange={(e) => setShowFlowMap(e.target.checked)}
-          />
-          Show Flow Map
-        </label>
+        {/* Right column: Checkboxes */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="checkbox"
+              checked={showFlowMap}
+              onChange={(e) => setShowFlowMap(e.target.checked)}
+            />
+            Show Flow Map
+          </label>
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <input
-            type="checkbox"
-            checked={showFlowArrows}
-            onChange={(e) => setShowFlowArrows(e.target.checked)}
-          />
-          Show Flow Arrows
-        </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="checkbox"
+              checked={showFlowArrows}
+              onChange={(e) => setShowFlowArrows(e.target.checked)}
+            />
+            Show Flow Arrows
+          </label>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="checkbox"
+              checked={showEchoLog}
+              onChange={(e) => setShowEchoLog(e.target.checked)}
+            />
+            📋 Echo Log
+          </label>
+        </div>
       </div>
 
-      {/* Info & Debugger */}
+      {/* Graph State Debugger - Positioned as Semi-transparent Overlay */}
       <div style={{
+        position: 'fixed',
+        top: '20px',
+        right: '20px',
         padding: '15px',
-        backgroundColor: '#2a2a2a',
+        backgroundColor: 'rgba(26, 26, 26, 0.85)',
+        backdropFilter: 'blur(10px)',
         borderRadius: '8px',
-        fontSize: '13px',
+        border: '1px solid rgba(255, 255, 255, 0.1)',
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        lineHeight: '1.6',
+        minWidth: '300px',
+        maxWidth: '400px',
+        maxHeight: '80vh',
+        overflowY: 'auto',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
+        zIndex: 1000,
+        color: '#fff',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ flex: 1 }}>
@@ -895,97 +968,77 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
           </div>
         </div>
 
-        <div style={{
-          marginTop: '15px',
-          padding: '12px',
-          backgroundColor: '#1a1a1a',
-          borderRadius: '4px',
-          fontFamily: 'monospace',
-          fontSize: '12px',
-          lineHeight: '1.6',
-          minHeight: '240px',
-          maxHeight: '260px',
-          overflowY: 'auto',
-        }}>
-          <strong style={{ color: '#10b981' }}>Graph State:</strong>
-          <div style={{ marginLeft: '10px', marginTop: '5px' }}>
-            <div>Total Nodes: <span style={{ color: '#fbbf24' }}>{Object.keys(riverGraph.nodes).length}</span></div>
-            <div>Total Splines: <span style={{ color: '#fbbf24' }}>{Object.keys(riverGraph.splines).length}</span></div>
-            <div>Main River: <span style={{ color: '#fbbf24' }}>{hasMainRiver ? 'Yes' : 'No'}</span></div>
-          </div>
-
-          {(() => {
-            const info = getSelectedNodeInfo();
-            if (!info) {
-              return (
-                <div style={{ marginTop: '10px', color: '#888' }}>
-                  No node selected
-                </div>
-              );
-            }
-
-            const spline = info.spline;
-            const isMainRiver = spline.isMain;
-
+        {(() => {
+          const info = getSelectedNodeInfo();
+          if (!info) {
             return (
-              <div style={{ marginTop: '10px' }}>
-                <strong style={{ color: '#3b82f6' }}>Selected Node:</strong>
-                <div style={{ marginLeft: '10px', marginTop: '5px' }}>
-                  <div>ID: <span style={{ color: '#a855f7' }}>{selectedNodeId?.slice(0, 8)}...</span></div>
-                  <div>Type: <span style={{ color: '#ef4444' }}>{info.nodeType}</span></div>
-                  <div>Position: <span style={{ color: '#fbbf24' }}>{info.nodeIndex + 1}/{info.totalNodes}</span></div>
-                </div>
-
-                <div style={{ marginTop: '8px' }}>
-                  <strong style={{ color: '#3b82f6' }}>Spline (River):</strong>
-                  <div style={{ marginLeft: '10px', marginTop: '5px' }}>
-                    <div>ID: <span style={{ color: '#a855f7' }}>{spline.id.slice(0, 8)}...</span></div>
-                    <div>Kind: <span style={{ color: '#10b981' }}>{spline.kind}</span> {isMainRiver && '(main)'}</div>
-                    <div>Nodes: <span style={{ color: '#fbbf24' }}>{spline.nodeIds.length}</span></div>
-                    <div>
-                      Width:
-                      <span style={{ color: '#fbbf24' }}>
-                        {(() => {
-                          const widthSpec = spline.attributes?.width ?? spline.width;
-                          if (!widthSpec) {
-                            return '—';
-                          }
-                          return widthSpec.kind === 'px'
-                            ? `${widthSpec.value}px`
-                            : `${widthSpec.value}%`;
-                        })()}
-                      </span>
-                    </div>
-                    {spline.parentId && (
-                      <>
-                        <div>Parent: <span style={{ color: '#a855f7' }}>{spline.parentId.slice(0, 8)}...</span></div>
-                        <div>Junction: <span style={{ color: '#a855f7' }}>{spline.parentJunction?.slice(0, 8)}...</span></div>
-                      </>
-                    )}
-                    {spline.children.length > 0 && (
-                      <div>Children: <span style={{ color: '#10b981' }}>{spline.children.length} tributary(ies)</span></div>
-                    )}
-                  </div>
-                </div>
-
-                {spline.children.length > 0 && (
-                  <div style={{ marginTop: '8px' }}>
-                    <strong style={{ color: '#10b981' }}>Tributaries:</strong>
-                    {spline.children.map((childId, idx) => {
-                      const childSpline = riverGraph.splines[childId];
-                      if (!childSpline) return null;
-                      return (
-                        <div key={childId} style={{ marginLeft: '10px', marginTop: '3px', color: '#888' }}>
-                          {idx + 1}. {childId.slice(0, 8)}... ({childSpline.nodeIds.length} nodes)
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+              <div style={{ marginTop: '10px', color: '#888' }}>
+                No node selected
               </div>
             );
-          })()}
-        </div>
+          }
+
+          const spline = info.spline;
+          const isMainRiver = spline.isMain;
+
+          return (
+            <div style={{ marginTop: '10px' }}>
+              <strong style={{ color: '#3b82f6' }}>Selected Node:</strong>
+              <div style={{ marginLeft: '10px', marginTop: '5px' }}>
+                <div>ID: <span style={{ color: '#a855f7' }}>{selectedNodeId?.slice(0, 8)}...</span></div>
+                <div>Type: <span style={{ color: '#ef4444' }}>{info.nodeType}</span></div>
+                <div>Position: <span style={{ color: '#fbbf24' }}>{info.nodeIndex + 1}/{info.totalNodes}</span></div>
+              </div>
+
+              <div style={{ marginTop: '8px' }}>
+                <strong style={{ color: '#3b82f6' }}>Spline (River):</strong>
+                <div style={{ marginLeft: '10px', marginTop: '5px' }}>
+                  <div>ID: <span style={{ color: '#a855f7' }}>{spline.id.slice(0, 8)}...</span></div>
+                  <div>Kind: <span style={{ color: '#10b981' }}>{spline.kind}</span> {isMainRiver && '(main)'}</div>
+                  <div>Nodes: <span style={{ color: '#fbbf24' }}>{spline.nodeIds.length}</span></div>
+                  <div>
+                    Width:
+                    <span style={{ color: '#fbbf24' }}>
+                      {(() => {
+                        const widthSpec = spline.attributes?.width ?? spline.width;
+                        if (!widthSpec) {
+                          return '—';
+                        }
+                        return widthSpec.kind === 'px'
+                          ? `${widthSpec.value}px`
+                          : `${widthSpec.value}%`;
+                      })()}
+                    </span>
+                  </div>
+                  {spline.parentId && (
+                    <>
+                      <div>Parent: <span style={{ color: '#a855f7' }}>{spline.parentId.slice(0, 8)}...</span></div>
+                      <div>Junction: <span style={{ color: '#a855f7' }}>{spline.parentJunction?.slice(0, 8)}...</span></div>
+                    </>
+                  )}
+                  {spline.children.length > 0 && (
+                    <div>Children: <span style={{ color: '#10b981' }}>{spline.children.length} tributary(ies)</span></div>
+                  )}
+                </div>
+              </div>
+
+              {spline.children.length > 0 && (
+                <div style={{ marginTop: '8px' }}>
+                  <strong style={{ color: '#10b981' }}>Tributaries:</strong>
+                  {spline.children.map((childId, idx) => {
+                    const childSpline = riverGraph.splines[childId];
+                    if (!childSpline) return null;
+                    return (
+                      <div key={childId} style={{ marginLeft: '10px', marginTop: '3px', color: '#888' }}>
+                        {idx + 1}. {childId.slice(0, 8)}... ({childSpline.nodeIds.length} nodes)
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Canvas + Overlay */}
