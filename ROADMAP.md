@@ -6,7 +6,7 @@
 
 **Финальная цель:** Прототип для миграции в UE5.6 Scriptable Tools
 
-**Дата последнего обновления:** 2025-12-01
+**Дата последнего обновления:** 2025-11-16
 
 ---
 
@@ -324,6 +324,49 @@
 ---
 
 ## 🔄 История изменений
+
+### 2025-11-16 - 🎯 3-Level DAG Hierarchy + Stream Behavior Fixes + Multiple Roles Solution
+- ✅ **3-Level DAG Hierarchy реализована:**
+  - ✅ SplineKind: `'river' | 'tributary' | 'stream'` - три уровня иерархии
+  - ✅ River (level 0) → Tributary (level 1) → Stream (level 2)
+  - ✅ Depth ≤ 2 enforced через I5 инвариант
+  - ✅ `determineSplineKind()` - автоматическое определение kind по parentId chain
+  - ✅ `refreshAllSplineKinds()` - обновление kind после топологических изменений
+- ✅ **Инварианты I1-I5 задокументированы:**
+  - ✅ I1: Валидация parentId
+  - ✅ I2: Ациклический граф (No Cycles)
+  - ✅ I3: Двунаправленная консистентность (Parent ⟺ Children)
+  - ✅ I4: Валидация parentJunction
+  - ✅ I5: Ограничение глубины дерева (depth ≤ 2)
+- ✅ **Stream behavior fixes:**
+  - ✅ Stream больше не ведет себя как независимая река (проверка `parentId !== null`)
+  - ✅ Stream корректно отсоединяется при удалении junction (detachTributary supports stream)
+  - ✅ Kind автоматически обновляется после топологических изменений (refreshAllSplineKinds)
+- ✅ **Multiple Roles Problem решена:**
+  - ✅ `getNodeRoles()` функция возвращает все роли узла (asSourceOf, asMouthOf, asInnerOf)
+  - ✅ `computeNodeKind()` refactored - использует getNodeRoles() и возвращает primary
+  - ✅ Решает проблему когда узел одновременно source + mouth + junction
+- ✅ **Comprehensive auto-deletion logging:**
+  - ✅ Все cascade deletions (splines, nodes) логируются через actionLogger
+  - ✅ Track before/after state с Set diff
+  - ✅ Детальная информация о причине удаления (< 2 nodes, orphaned, cascade)
+- ✅ **Tributary new_branch от inner nodes:**
+  - ✅ Inner nodes притоков теперь могут создавать streams (new_branch)
+  - ✅ Stream inner nodes заблокированы (нарушили бы depth > 2)
+- ✅ **Grid density 3x increase:**
+  - ✅ DEFAULT_COLS: 20 → 60
+  - ✅ DEFAULT_ROWS: 12 → 36
+  - ✅ DEFAULT_GRID_SIZE: 50 → 16.67
+  - ✅ Canvas size остался 1000x600px, но плотность сетки в 3 раза выше
+- ✅ Build successful, type-check passed, все изменения закоммичены и запушены
+
+**Коммиты:**
+- `32bbb83` - fix: Stream splines now behave correctly as attached children
+- `5889340` - feat: Prevent stream children and add comprehensive auto-deletion logging
+- `bb4585f` - feat: Add getNodeRoles() to solve "multiple roles" problem
+- `e4b2245` - fix: Allow new_branch creation from inner nodes of tributaries
+- `f7bf917` - feat: Increase grid density to 3x3 cells
+- `4363657` - fix: Correct grid density to 3x (20x12 → 60x36)
 
 ### 2025-11-12 - 🔧 Рефакторинг архитектуры (Variant A) + Bug Fixes + UI Improvements
 - ✅ **Архитектурный рефакторинг (Variant A - полный):**
