@@ -13,8 +13,20 @@ export const SNAP_DISTANCE = 25;
 /** Distance for spline snapping (in pixels) */
 export const SPLINE_SNAP_DISTANCE = 30;
 
-/** Default grid size (in pixels) - each original cell divided into 3x3 */
-export const DEFAULT_GRID_SIZE = 16.67;
+/** Grid hierarchy: Small cells (finest level) */
+export const SMALL_CELL_SIZE = 16; // Size of one small cell in pixels
+export const SMALL_COLS = 60; // Total small cells horizontally (20 middle × 3)
+export const SMALL_ROWS = 36; // Total small cells vertically (12 middle × 3)
+
+/** Grid hierarchy: Middle cells (3x3 small cells) */
+export const MIDDLE_CELL_SIZE = 48; // Size of one middle cell in pixels (3 × 16)
+export const MIDDLE_COLS = 20; // Number of middle cells horizontally
+export const MIDDLE_ROWS = 12; // Number of middle cells vertically
+
+/** Default grid size (backward compatibility) */
+export const DEFAULT_GRID_SIZE = SMALL_CELL_SIZE;
+export const DEFAULT_COLS = SMALL_COLS;
+export const DEFAULT_ROWS = SMALL_ROWS;
 
 /** Default number of segments for curve interpolation */
 export const DEFAULT_CURVE_SEGMENTS = 50;
@@ -24,10 +36,6 @@ export const DEFAULT_MAIN_RIVERBED_WIDTH = 60;
 
 /** Default tributary width (as percentage of main river) */
 export const DEFAULT_TRIBUTARY_WIDTH_PERCENT = 50;
-
-/** Default grid dimensions (3x density: 20x12 → 60x36) */
-export const DEFAULT_COLS = 60;
-export const DEFAULT_ROWS = 36;
 
 /** River types with their base speed (m/s) */
 export const RIVER_TYPES: Record<RiverType, number> = {
@@ -58,7 +66,8 @@ export const SPLINE_TENSION = 0.5;
 /** Grid and canvas colors */
 export const COLORS = {
   BACKGROUND: '#1a1a1a',
-  GRID_LINE: '#333',
+  GRID_LINE_SMALL: '#333', // Small cell grid lines
+  GRID_LINE_MIDDLE: '#555', // Middle cell grid lines (more visible)
   WATER_FULL: 'rgba(64, 164, 223, 0.25)',
   LAND_FULL: 'rgba(139, 90, 43, 0.3)',
   MIXED: 'rgba(104, 131, 62, 0.35)',
