@@ -13,8 +13,8 @@ export const SNAP_DISTANCE = 25;
 /** Distance for spline snapping (in pixels) */
 export const SPLINE_SNAP_DISTANCE = 30;
 
-/** Default grid size (in pixels) */
-export const DEFAULT_GRID_SIZE = 50;
+/** Default grid size (in pixels) - each cell is 3x3 */
+export const DEFAULT_GRID_SIZE = 3;
 
 /** Default number of segments for curve interpolation */
 export const DEFAULT_CURVE_SEGMENTS = 50;
@@ -25,9 +25,9 @@ export const DEFAULT_MAIN_RIVERBED_WIDTH = 60;
 /** Default tributary width (as percentage of main river) */
 export const DEFAULT_TRIBUTARY_WIDTH_PERCENT = 50;
 
-/** Default grid dimensions */
-export const DEFAULT_COLS = 20;
-export const DEFAULT_ROWS = 12;
+/** Default grid dimensions (adjusted for 3x3 cell size to maintain ~1000x600 canvas) */
+export const DEFAULT_COLS = 333;
+export const DEFAULT_ROWS = 200;
 
 /** River types with their base speed (m/s) */
 export const RIVER_TYPES: Record<RiverType, number> = {
