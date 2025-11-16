@@ -1,7 +1,7 @@
 # 🤖 AGENTS.md - AI Agent Handoff Guide
 
-**Последнее обновление:** 2025-11-12
-**Текущая фаза:** Фаза 3 завершена - Приложение работает на Node-Edge архитектуре
+**Последнее обновление:** 2025-11-16
+**Текущая фаза:** Фаза 3 завершена + Echo Log система добавлена
 **Статус:** ✅ Stable - готово к тестированию и дальнейшей разработке
 
 ---
@@ -19,6 +19,7 @@
 - ✅ Базовые операции: создание реки, добавление/удаление/перемещение вершин
 - ✅ Extend upstream/downstream работают корректно
 - ✅ Comprehensive debugger показывает полную структуру графа
+- ✅ **Echo Log система для отладки** (Maya-style action logging)
 - 🚧 Multi-river support (в разработке)
 - 🚧 Tributary creation/attachment (требует тестирования)
 
@@ -34,6 +35,7 @@
 │  src/components/                        │
 │  - RiverEditorDemo.tsx                  │
 │  - RiverCanvas.tsx, RiverOverlay.tsx    │
+│  - ActionLog/ActionLogPanel.tsx (NEW!)  │
 └─────────────────────────────────────────┘
               ↓
 ┌─────────────────────────────────────────┐
@@ -41,11 +43,13 @@
 │  src/hooks/                             │
 │  - useRiverGraphV2.ts (graph state)     │
 │  - useRiverRendererV2.ts (rendering)    │
+│  - useActionLog.ts (log panel) (NEW!)   │
 └─────────────────────────────────────────┘
               ↓
 ┌─────────────────────────────────────────┐
-│  Service Layer                          │
+│  Service Layer + Middleware             │
 │  src/services/                          │
+│  - ActionDispatcher.ts (NEW! logging middleware)│
 │  - GraphService.ts (adapter)            │
 │  - GraphAdapter.ts (V2 → legacy)        │
 │  - RenderService.ts (rendering)         │
@@ -57,6 +61,7 @@
 │  src/core/                              │
 │  - graph/ (types, operations, validation)│
 │  - geometry/ (curves, frames, cache)    │
+│  - actions/ (NEW! types, logger) ─────> ActionLogger (singleton)
 └─────────────────────────────────────────┘
 ```
 
@@ -297,7 +302,7 @@ if (isMouth) {
 
 ### Presentation Layer
 
-#### `src/components/RiverEditorDemo.tsx` (470 строк)
+#### `src/components/RiverEditorDemo.tsx` (1043 строки)
 **Назначение:** Демо приложение с полным UI
 
 **Новые фичи (2025-11-12):**
@@ -309,6 +314,269 @@ if (isMouth) {
 - **New River Button** (строки 48-53):
   - Зеленая кнопка в правом верхнем углу
   - Пока вызывает `clearAll()` (TODO: multi-river support)
+
+**Обновления (2025-11-16):**
+- **Echo Log Button** (строки 875-894):
+  - Кнопка "📋 Echo Log" для открытия панели логов
+  - Синяя кнопка рядом с "New River"
+  - Переключает видимость ActionLogPanel
+- **ActionLogPanel интеграция** (строки 1011-1016):
+  - Панель логов появляется при нажатии кнопки
+  - Показывает все операции с графом в реальном времени
+
+### Echo Log система (добавлена 2025-11-16)
+
+**Назначение:** Maya-style логирование всех операций с графом для отладки и Undo/Redo.
+
+#### `src/core/actions/types.ts` (220 строк)
+**Назначение:** Типы для системы логирования действий
+
+**Ключевые экспорты:**
+- `RiverActionType` - union тип всех действий (20+ типов):
+  - Node operations: ADD_NODE, MOVE_NODE, DELETE_NODE, MERGE_NODES
+  - Spline operations: CREATE_SPLINE, DELETE_SPLINE, REVERSE_SPLINE, UPDATE_SPLINE_WIDTH
+  - Tributary operations: ATTACH_TRIBUTARY, DETACH_TRIBUTARY, ATTACH_AS_TRIBUTARY
+  - Merge operations: MERGE_SPLINES
+  - Graph operations: CLEAR_GRAPH
+  - Edge operations: ADD_EDGE, DELETE_EDGE, etc.
+
+- `RiverAction` - полный контекст действия:
+  ```typescript
+  interface RiverAction {
+    id: string;                  // UUID
+    type: RiverActionType;
+    payload: ActionPayload;      // Параметры операции
+    timestamp: number;           // Unix timestamp
+    before: GraphSnapshot;       // Состояние ДО
+    after: GraphSnapshot;        // Состояние ПОСЛЕ
+    duration: number;            // Время выполнения (мс)
+    error?: {
+      message: string;
+      stack?: string;
+    };
+    description: string;         // Человекочитаемое описание
+  }
+  ```
+
+- `GraphSnapshot` - легковесный снимок графа:
+  ```typescript
+  interface GraphSnapshot {
+    nodeCount: number;
+    splineCount: number;
+    rootCount: number;           // Количество независимых рек
+    splineIds: string[];
+    nodeIds: string[];
+    isValid: boolean;
+    validationError?: string;
+  }
+  ```
+
+**UE-Ready:** ✅ Да - типы подходят для Undo/Redo системы в UE
+
+#### `src/core/actions/logger.ts` (350 строк)
+**Назначение:** Singleton сервис для логирования действий
+
+**Класс ActionLogger:**
+```typescript
+class ActionLogger {
+  private actions: RiverAction[];            // Циркулярный буфер (500)
+  private maxActions: number = 500;
+
+  log(type, payload, before, after, duration, error?): RiverAction
+  getActions(): RiverAction[]
+  getErrors(): RiverAction[]
+  getActionById(id: string): RiverAction | undefined
+  clear(): void
+
+  // Фильтрация
+  filterByType(types: RiverActionType[]): RiverAction[]
+  filterByTimeRange(start, end): RiverAction[]
+
+  // Экспорт
+  exportToJSON(): string                    // Для replay
+  exportAsCommands(): string                // Maya-style команды
+
+  // Статистика
+  getStats(): {
+    totalActions: number;
+    totalErrors: number;
+    averageDuration: number;
+    actionsByType: Record<RiverActionType, number>;
+  }
+}
+
+export const actionLogger = new ActionLogger();  // Singleton
+```
+
+**Функции генерации:**
+- `createSnapshot(graph, options?)` - создает GraphSnapshot
+- `generateDescription(payload)` - генерирует человекочитаемое описание:
+  - "Add node at (125, 340)"
+  - "Attach tributary t3 to river main at node n7"
+  - "Merge splines river2 → river1"
+
+**UE-Ready:** ✅ Да - можно использовать для Undo/Redo стека
+
+#### `src/core/actions/index.ts` (7 строк)
+**Назначение:** Barrel export для action системы
+
+**Экспорты:**
+```typescript
+export * from './types';
+export * from './logger';
+```
+
+#### `src/services/ActionDispatcher.ts` (365 строк)
+**Назначение:** Middleware обертка для всех операций GraphService
+
+**Паттерн:**
+```typescript
+class ActionDispatcher {
+  private static dispatch<T>(
+    graph: RiverGraphV2,
+    payload: T,
+    executor: (graph) => RiverGraphV2 | { graph, ... }
+  ): DispatchResult {
+    // 1. Snapshot before
+    // 2. Execute operation
+    // 3. Catch errors
+    // 4. Snapshot after
+    // 5. Log action
+    // 6. Return result
+  }
+
+  // Все операции обернуты:
+  static addNode(graph, x, y): DispatchResult & { nodeId? }
+  static moveNode(graph, nodeId, toX, toY): DispatchResult
+  static deleteNode(graph, nodeId): DispatchResult
+  static mergeNodes(graph, dragged, target, survivor): DispatchResult
+
+  static createSpline(graph, kind, nodeIds, width): DispatchResult & { splineId? }
+  static deleteSpline(graph, splineId): DispatchResult
+  static reverseSpline(graph, splineId): DispatchResult
+  static updateSplineWidth(graph, splineId, newWidth): DispatchResult
+
+  static attachTributary(graph, child, parent, junction): DispatchResult
+  static detachTributary(graph, tribId, createNewMouth?): DispatchResult & { newNodeId? }
+
+  static mergeSplines(graph, draggedNode, targetNode): DispatchResult
+  static attachSplineAsTributary(graph, draggedNode, targetNode): DispatchResult
+
+  static clearGraph(graph): DispatchResult
+}
+
+interface DispatchResult {
+  graph: RiverGraphV2;          // Новый граф (или оригинал при ошибке)
+  actionId: string;             // ID записи в логе
+  success: boolean;             // true если нет ошибок
+  error?: Error;                // Ошибка если есть
+}
+```
+
+**Интеграция с useRiverGraphV2:**
+Все операции в хуке теперь используют ActionDispatcher вместо прямого вызова GraphService:
+```typescript
+// Пример из useRiverGraphV2.ts:292-299
+const moveNode = useCallback(
+  (nodeId: NodeId, x: number, y: number) => {
+    const result = ActionDispatcher.moveNode(riverGraph, nodeId, x, y);
+    if (result.success) {
+      setRiverGraph(result.graph);
+    }
+  },
+  [riverGraph]
+);
+```
+
+**UE-Ready:** 🔄 Частично - логика полезна для Undo/Redo, но класс придется адаптировать
+
+#### `src/hooks/useActionLog.ts` (60 строк)
+**Назначение:** React hook для управления видимостью ActionLogPanel
+
+**API:**
+```typescript
+interface UseActionLogResult {
+  isOpen: boolean;
+  open: () => void;
+  close: () => void;
+  toggle: () => void;
+}
+
+export const useActionLog = (initialOpen = false): UseActionLogResult
+```
+
+**Использование:**
+```typescript
+const actionLog = useActionLog(false);
+
+<button onClick={actionLog.toggle}>
+  {actionLog.isOpen ? '❌ Close' : '📋'} Echo Log
+</button>
+
+<ActionLogPanel
+  isOpen={actionLog.isOpen}
+  onClose={actionLog.close}
+/>
+```
+
+**UE-Ready:** ❌ React специфика
+
+#### `src/components/ActionLog/ActionLogPanel.tsx` (350 строк)
+**Назначение:** UI панель для отображения логов
+
+**Props:**
+```typescript
+interface ActionLogPanelProps {
+  isOpen: boolean;
+  onClose: () => void;
+  autoScroll?: boolean;
+}
+```
+
+**Функции:**
+- Темная консольная тема (стиль Maya Echo Command)
+- Хронологический список действий с временными метками
+- Фильтры:
+  - По типам действий (multiselect dropdown)
+  - Только ошибки (toggle)
+  - Поиск по ID/описанию (text input)
+- Экспорт:
+  - JSON (для replay/анализа)
+  - Commands (Maya-style текст)
+- Копирование команд в буфер по клику
+- Отображение изменений графа:
+  - `nodes: 5 → 6 | splines: 2 → 3`
+  - `✓ valid` или `✗ invalid (error message)`
+- Подсветка ошибок красным + stack trace
+- Автопрокрутка к новым действиям
+- Статистика в футере:
+  - Среднее время выполнения
+  - Количество действий
+  - Количество ошибок
+
+**Пример вывода:**
+```
+[15:24:32.145] ADD_NODE                    +1.2ms
+  Add node at (125, 340)
+  nodes: 4 → 5 | splines: 1 → 1 | ✓ valid
+  [Copy Command]
+
+[15:24:35.892] ATTACH_TRIBUTARY            +3.8ms
+  Attach tributary t3 to river main at node n4
+  nodes: 5 → 5 | splines: 1 → 2 | ✓ valid
+  [Copy Command]
+
+[15:24:41.023] MERGE_SPLINES               +2.1ms  ERROR
+  Merge splines river2 → river1
+  nodes: 8 → 8 | splines: 2 → 2 | ✗ invalid
+  Error: Cannot merge splines: cycle detected
+  at mergeSplines (operations.ts:487)
+  at ActionDispatcher.dispatch (ActionDispatcher.ts:65)
+  ...
+  [Copy Command]
+```
+
+**UE-Ready:** ❌ Не переносится (будет Slate/UMG в Editor Mode)
 
 ---
 

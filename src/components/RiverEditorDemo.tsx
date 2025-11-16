@@ -9,6 +9,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useRiverGraphV2 } from '@hooks/useRiverGraphV2';
 import { useRiverRendererV2 } from '@hooks/useRiverRendererV2';
 import { useInteractionLogger } from '@hooks/useInteractionLogger';
+import { useActionLog } from '@hooks/useActionLog';
 import { RiverOverlay } from './RiverEditor/RiverOverlay';
 import { ActionLogPanel } from './ActionLog/ActionLogPanel';
 import { DEFAULT_GRID_SIZE, DEFAULT_MAIN_RIVERBED_WIDTH, DEFAULT_RIVER_TYPE, SNAP_DISTANCE, SPLINE_SNAP_DISTANCE } from '@domain/constants';
@@ -94,6 +95,9 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
 
   // Interaction logger for debugging
   const logger = useInteractionLogger(true);
+
+  // Action log panel state
+  const actionLog = useActionLog(false);
 
   const computeWidthPx = useCallback(
     (spline: Spline | null | undefined) => {
@@ -917,11 +921,51 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         zIndex: 1000,
         color: '#fff',
       }}>
-        <strong style={{ color: '#10b981' }}>Graph State:</strong>
-        <div style={{ marginLeft: '10px', marginTop: '5px' }}>
-          <div>Total Nodes: <span style={{ color: '#fbbf24' }}>{Object.keys(riverGraph.nodes).length}</span></div>
-          <div>Total Splines: <span style={{ color: '#fbbf24' }}>{Object.keys(riverGraph.splines).length}</span></div>
-          <div>Main River: <span style={{ color: '#fbbf24' }}>{hasMainRiver ? 'Yes' : 'No'}</span></div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div style={{ flex: 1 }}>
+            <strong>Instructions:</strong>
+            <ul style={{ margin: '5px 0 0 0', paddingLeft: '20px', fontSize: '12px' }}>
+              <li>Click on canvas to add/extend nodes</li>
+              <li>Drag nodes to reposition them</li>
+              <li><strong>Double-click</strong> on node to delete it</li>
+              <li>Select <strong>source/mouth</strong> node then click to <strong>extend</strong></li>
+              <li>Select mid-node to <strong>insert</strong> or create <strong>tributary</strong></li>
+            </ul>
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={handleCreateNewRiver}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#059669',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '13px',
+                fontWeight: 'bold',
+              }}
+            >
+              🆕 New River
+            </button>
+
+            <button
+              onClick={actionLog.toggle}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: actionLog.isOpen ? '#dc2626' : '#0e639c',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '13px',
+                fontWeight: 'bold',
+              }}
+            >
+              {actionLog.isOpen ? '❌ Close' : '📋'} Echo Log
+            </button>
+          </div>
         </div>
 
         {(() => {
@@ -1040,14 +1084,12 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         />
       </div>
 
-      {/* Echo Log Panel */}
-      {showEchoLog && (
-        <ActionLogPanel
-          logs={actionLogger.getLogs()}
-          onClear={actionLogger.clearLogs}
-          onExport={actionLogger.exportLogs}
-        />
-      )}
+      {/* Action Log Panel */}
+      <ActionLogPanel
+        isOpen={actionLog.isOpen}
+        onClose={actionLog.close}
+        autoScroll={true}
+      />
     </div>
   );
 };
