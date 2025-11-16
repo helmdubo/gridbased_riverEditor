@@ -9,9 +9,7 @@ import { useState, useCallback } from 'react';
 import type { RiverGraphV2, NodeId, SplineId, Spline } from '@/core/graph/types';
 import { makeWidthPx, makeWidthRelative, makeRiverAttributes } from '@/core/graph/types';
 import GraphService from '@services/GraphService';
-import { useActionLogger } from './useActionLogger';
-import { getNodeKind } from '@/core/graph/nodeKinds';
-import { assertNetworkValid } from '@/core/graph/invariants';
+import ActionDispatcher from '@services/ActionDispatcher';
 
 export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
   const [riverGraph, setRiverGraphInternal] = useState<RiverGraphV2>(
@@ -559,8 +557,10 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
    */
   const moveNode = useCallback(
     (nodeId: NodeId, x: number, y: number) => {
-      const newGraph = GraphService.moveNode(riverGraph, nodeId, x, y);
-      setRiverGraph(newGraph);
+      const result = ActionDispatcher.moveNode(riverGraph, nodeId, x, y);
+      if (result.success) {
+        setRiverGraph(result.graph);
+      }
     },
     [riverGraph]
   );
@@ -570,33 +570,14 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
    */
   const deleteNode = useCallback(
     (nodeId: NodeId) => {
-      // Track state before deletion for logging
-      const isJunction = GraphService.isJunctionNode(riverGraph, nodeId);
-      const affectedSplines: string[] = [];
-      const beforeSplineIds = new Set(Object.keys(riverGraph.splines));
-      const beforeNodeIds = new Set(Object.keys(riverGraph.nodes));
+      const result = ActionDispatcher.deleteNode(riverGraph, nodeId);
 
-      // Find all splines affected by this deletion
-      Object.values(riverGraph.splines).forEach((s) => {
-        const spline = s as Spline;
-        if (spline.nodeIds.includes(nodeId as string)) {
-          affectedSplines.push(spline.id);
-        }
-      });
-
-      // Find tributaries that will be detached (if junction)
-      const detachedTributaries: string[] = [];
-      if (isJunction) {
-        Object.values(riverGraph.splines).forEach((s) => {
-          const spline = s as Spline;
-          if (spline.parentJunction === nodeId) {
-            detachedTributaries.push(spline.id);
-          }
-        });
+      if (!result.success) {
+        console.error('Failed to delete node:', result.error);
+        return;
       }
 
-      // Execute deletion
-      let newGraph = GraphService.deleteNode(riverGraph, nodeId);
+      let newGraph = result.graph;
       newGraph = ensureMainSpline(newGraph);
 
       // Track what was automatically deleted
@@ -770,8 +751,10 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
   const updateSplineWidth = useCallback(
     (splineId: SplineId, widthValue: number, isAbsolute: boolean = false) => {
       const width = isAbsolute ? makeWidthPx(widthValue) : makeWidthRelative(widthValue);
-      const newGraph = GraphService.updateSplineWidth(riverGraph, splineId, width);
-      setRiverGraph(newGraph);
+      const result = ActionDispatcher.updateSplineWidth(riverGraph, splineId, width);
+      if (result.success) {
+        setRiverGraph(result.graph);
+      }
     },
     [riverGraph]
   );
@@ -810,29 +793,14 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
    */
   const mergeNodes = useCallback(
     (draggedNodeId: NodeId, targetNodeId: NodeId, survivorNodeId: NodeId) => {
-      const draggedKind = getNodeKind(riverGraph, draggedNodeId);
-      const targetKind = getNodeKind(riverGraph, targetNodeId);
-      const survivorKind = draggedNodeId === survivorNodeId ? draggedKind : targetKind;
+      const result = ActionDispatcher.mergeNodes(riverGraph, draggedNodeId, targetNodeId, survivorNodeId);
 
-      const newGraph = GraphService.mergeNodes(riverGraph, draggedNodeId, targetNodeId, survivorNodeId);
+      if (!result.success) {
+        console.error('Failed to merge nodes:', result.error);
+        return;
+      }
 
-      actionLogger.log(
-        'MERGE_NODES',
-        `Merge ${draggedKind} node ${draggedNodeId.slice(0, 8)}... → ${targetKind} node ${targetNodeId.slice(0, 8)}... (survivor: ${survivorKind})`,
-        riverGraph,
-        newGraph,
-        {
-          draggedNodeId,
-          targetNodeId,
-          survivorNodeId,
-          draggedKind,
-          targetKind,
-          survivorKind,
-          selectedNode: getSelectedNodeContext(),
-        }
-      );
-
-      setRiverGraph(newGraph);
+      setRiverGraph(result.graph);
 
       // Update selected node to survivor if one of the merged nodes was selected
       if (selectedNodeId === draggedNodeId || selectedNodeId === targetNodeId) {
@@ -858,10 +826,14 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
         (spline as Spline).nodeIds.includes(targetNodeId as string)
       );
 
-      const draggedSplineId = draggedSplineEntry ? draggedSplineEntry[0] : 'unknown';
-      const targetSplineId = targetSplineEntry ? targetSplineEntry[0] : 'unknown';
+      const result = ActionDispatcher.attachSplineAsTributary(riverGraph, draggedNodeId, targetNodeId);
 
-      let newGraph = GraphService.attachSplineAsTributary(riverGraph, draggedNodeId, targetNodeId);
+      if (!result.success) {
+        console.error('Failed to attach spline as tributary:', result.error);
+        return;
+      }
+
+      let newGraph = result.graph;
 
       if (draggedSplineEntry && targetSplineEntry) {
         const [, draggedSpline] = draggedSplineEntry as [string, Spline];
@@ -907,43 +879,14 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
    */
   const mergeSplines = useCallback(
     (draggedNodeId: NodeId, targetNodeId: NodeId) => {
-      // Find which splines are involved
-      const draggedSplineEntry = Object.entries(riverGraph.splines).find(([, spline]) =>
-        (spline as Spline).nodeIds.includes(draggedNodeId as string)
-      );
-      const targetSplineEntry = Object.entries(riverGraph.splines).find(([, spline]) =>
-        (spline as Spline).nodeIds.includes(targetNodeId as string)
-      );
+      const result = ActionDispatcher.mergeSplines(riverGraph, draggedNodeId, targetNodeId);
 
-      const draggedSplineId = draggedSplineEntry ? draggedSplineEntry[0] : 'unknown';
-      const targetSplineId = targetSplineEntry ? targetSplineEntry[0] : 'unknown';
+      if (!result.success) {
+        console.error('Failed to merge splines:', result.error);
+        return;
+      }
 
-      const draggedKind = getNodeKind(riverGraph, draggedNodeId);
-      const targetKind = getNodeKind(riverGraph, targetNodeId);
-
-      const newGraph = GraphService.mergeSplines(
-        riverGraph,
-        draggedNodeId,
-        targetNodeId
-      );
-
-      actionLogger.log(
-        'MERGE_SPLINES',
-        `Merge spline ${draggedSplineId.slice(0, 8)}... (${draggedKind}) → ${targetSplineId.slice(0, 8)}... (${targetKind}) - river extension`,
-        riverGraph,
-        newGraph,
-        {
-          draggedNodeId,
-          targetNodeId,
-          draggedSplineId,
-          targetSplineId,
-          draggedKind,
-          targetKind,
-          selectedNode: getSelectedNodeContext(),
-        }
-      );
-
-      setRiverGraph(newGraph);
+      setRiverGraph(result.graph);
     },
     [riverGraph, actionLogger]
   );

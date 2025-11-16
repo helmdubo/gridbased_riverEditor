@@ -15,7 +15,7 @@
 
 ---
 
-## 🏗️ Архитектура: Node-Edge Graph Model
+## 🏗️ Архитектура: Node-Edge Graph Model с 3-уровневой иерархией
 
 ### Переход от RiverGraph к Node-Edge модели
 
@@ -27,12 +27,11 @@ interface RiverGraph {
 }
 ```
 
-**Новая модель (UE-Ready):**
+**Новая модель (UE-Ready) с 3-level DAG Hierarchy:**
 ```typescript
 interface RiverGraphV2 {
   nodes: Record<NodeId, Node>;    // все вершины
-  edges: Record<EdgeId, Edge>;    // все рёбра (main + tributaries)
-  mainEdgeId: EdgeId | null;      // ID главной реки
+  splines: Record<SplineId, Spline>; // все сплайны (river + tributary + stream)
 }
 
 interface Node {
@@ -41,14 +40,42 @@ interface Node {
   y: number;
 }
 
-interface Edge {
-  id: EdgeId;
-  kind: 'river' | 'tributary';
+interface Spline {
+  id: SplineId;
+  kind: 'river' | 'tributary' | 'stream';  // 3 уровня иерархии
   nodeIds: NodeId[];              // путь по узлам (source → mouth)
   width: { kind: 'px' | 'relative'; value: number };
-  parentId: EdgeId | null;        // null для независимых рек
-  parentJunction: NodeId | null;  // узел присоединения (не исток)
-  children: EdgeId[];
+  parentId: SplineId | null;      // null для независимых рек (level 0)
+  parentJunction: NodeId | null;  // узел присоединения к родителю
+  children: SplineId[];           // дочерние сплайны
+}
+```
+
+### 3-Level DAG Hierarchy
+
+**Иерархия глубины ≤ 2:**
+```
+River (level 0)
+  ├─→ Tributary (level 1)
+  │     └─→ Stream (level 2) [max depth]
+  └─→ Tributary (level 1)
+```
+
+**Правила:**
+- **River** (level 0): `parentId = null`, может иметь children
+- **Tributary** (level 1): `parentId = River`, может иметь children (streams)
+- **Stream** (level 2): `parentId = Tributary`, **НЕ может** иметь children (max depth)
+
+**Автоматическое определение kind:**
+```typescript
+function determineSplineKind(graph: RiverGraphV2, splineId: SplineId): SplineKind {
+  const spline = graph.splines[splineId];
+  if (!spline.parentId) return 'river';
+
+  const parent = graph.splines[spline.parentId];
+  if (!parent.parentId) return 'tributary';
+
+  return 'stream';
 }
 ```
 
@@ -92,7 +119,8 @@ src/
 ├── services/                      # 🔄 ЧАСТИЧНО ПЕРЕНОСИТСЯ
 │   ├── GraphService.ts           # → Blueprint Function Library
 │   ├── FlowService.ts            # → Blueprint Function Library
-│   └── RenderService.ts          # ❌ НЕ ПЕРЕНОСИТСЯ (UE rendering)
+│   ├── RenderService.ts          # ❌ НЕ ПЕРЕНОСИТСЯ (UE rendering)
+│   └── ActionDispatcher.ts       # → Logging middleware для операций
 │
 ├── hooks/                         # ❌ НЕ ПЕРЕНОСИТСЯ
 │   └── useRiverGraph.ts          # React специфика
@@ -144,6 +172,299 @@ RenderService → Spline Mesh Components + Landscape
 - React hooks → Blueprint variables + events
 - Canvas rendering → Spline Meshes + PCG
 - SVG overlay → Slate widgets в Editor Mode
+
+---
+
+## 📋 Echo Log система (Debugging & Logging)
+
+### Назначение
+Maya-style Echo Command система для отладки операций с графом рек. Записывает полный контекст каждой операции: входные параметры, состояние графа до/после, время выполнения, ошибки.
+
+### Архитектура
+
+```
+User Action (UI)
+      ↓
+useRiverGraphV2 (hook)
+      ↓
+ActionDispatcher (middleware)  ← перехватывает операцию
+      ↓
+GraphService operation
+      ↓
+ActionLogger.log()  ← записывает в лог
+      ↓
+ActionLogPanel (UI)  ← отображает логи
+```
+
+### Компоненты
+
+#### 1. Action Types (`src/core/actions/types.ts`)
+**Переносится в UE:** ✅ Частично (для Undo/Redo и отладки)
+
+```typescript
+// 20+ типов действий
+type RiverActionType =
+  | 'ADD_NODE' | 'MOVE_NODE' | 'DELETE_NODE'
+  | 'MERGE_NODES' | 'MERGE_SPLINES'
+  | 'ATTACH_TRIBUTARY' | 'DETACH_TRIBUTARY'
+  | 'CREATE_SPLINE' | 'DELETE_SPLINE'
+  // ...
+
+interface RiverAction {
+  id: string;
+  type: RiverActionType;
+  payload: ActionPayload;      // Параметры операции
+  timestamp: number;
+  before: GraphSnapshot;        // Состояние ДО
+  after: GraphSnapshot;         // Состояние ПОСЛЕ
+  duration: number;             // Время выполнения (мс)
+  error?: ErrorDetails;         // Ошибка + stack trace
+  description: string;          // "Attach tributary t3 to river main at node n7"
+}
+
+interface GraphSnapshot {
+  nodeCount: number;
+  splineCount: number;
+  rootCount: number;
+  splineIds: string[];
+  nodeIds: string[];
+  isValid: boolean;
+  validationError?: string;
+}
+```
+
+**UE эквивалент:**
+```cpp
+USTRUCT(BlueprintType)
+struct FRiverAction {
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadOnly)
+    FGuid ActionID;
+
+    UPROPERTY(BlueprintReadOnly)
+    ERiverActionType Type;
+
+    UPROPERTY(BlueprintReadOnly)
+    FDateTime Timestamp;
+
+    UPROPERTY(BlueprintReadOnly)
+    FRiverGraphSnapshot Before;
+
+    UPROPERTY(BlueprintReadOnly)
+    FRiverGraphSnapshot After;
+};
+```
+
+#### 2. ActionLogger Service (`src/core/actions/logger.ts`)
+**Переносится в UE:** ✅ Да (для Undo/Redo)
+
+**Возможности:**
+- Циркулярный буфер (500 записей) для экономии памяти
+- Фильтрация по типам действий, временным диапазонам, ошибкам
+- Экспорт в JSON (для replay/анализа)
+- Экспорт в Maya-style commands (для миграции)
+- Статистика (средняя длительность, частота ошибок)
+
+**API:**
+```typescript
+class ActionLogger {
+  log(type, payload, before, after, duration, error?): RiverAction
+  getActions(): RiverAction[]
+  getErrors(): RiverAction[]
+  exportToJSON(): string
+  exportAsCommands(): string
+  getStats(): LogStatistics
+}
+
+export const actionLogger = new ActionLogger();  // Singleton
+```
+
+**UE эквивалент:**
+```cpp
+UCLASS()
+class URiverActionLogger : public UObject {
+    UFUNCTION(BlueprintCallable)
+    void LogAction(ERiverActionType Type, const FRiverGraph& Before, const FRiverGraph& After);
+
+    UFUNCTION(BlueprintCallable)
+    TArray<FRiverAction> GetActionHistory() const;
+};
+```
+
+#### 3. ActionDispatcher Middleware (`src/services/ActionDispatcher.ts`)
+**Переносится в UE:** 🔄 Частично (логика логирования)
+
+**Паттерн:**
+```typescript
+class ActionDispatcher {
+  private static dispatch<T>(
+    graph: RiverGraphV2,
+    payload: ActionPayload,
+    executor: (graph) => RiverGraphV2
+  ): DispatchResult {
+    const startTime = performance.now();
+    const before = createSnapshot(graph);
+
+    let resultGraph = graph;
+    let error: Error | undefined;
+
+    try {
+      resultGraph = executor(graph);
+    } catch (err) {
+      error = err;
+      resultGraph = graph;  // Keep original on error
+    }
+
+    const duration = performance.now() - startTime;
+    const after = createSnapshot(resultGraph, { includeValidation: true });
+
+    const action = actionLogger.log(type, payload, before, after, duration, error);
+
+    return {
+      graph: resultGraph,
+      actionId: action.id,
+      success: !error,
+      error,
+    };
+  }
+
+  // Wrapped operations
+  static moveNode(graph, nodeId, x, y): DispatchResult { }
+  static deleteNode(graph, nodeId): DispatchResult { }
+  static mergeSplines(graph, draggedNodeId, targetNodeId): DispatchResult { }
+  // ... all graph operations
+}
+```
+
+**В UE:** Можно использовать для Undo/Redo стека и отладки Blueprint операций.
+
+#### 4. ActionLogPanel UI (`src/components/ActionLog/ActionLogPanel.tsx`)
+**Переносится в UE:** ❌ Не переносится (будет UMG/Slate)
+
+**Функции:**
+- Консольный интерфейс с темной темой
+- Хронологический список действий
+- Фильтры (по типам, только ошибки, поиск)
+- Экспорт (JSON, Commands)
+- Copy-to-clipboard
+- Отображение изменений графа (nodes: 5→6 | splines: 2→3)
+- Подсветка ошибок + stack trace
+- Автопрокрутка к новым записям
+- Статистика (avg duration, total errors)
+
+**UE эквивалент:** Editor Mode Tool с Slate UI или Output Log интеграция.
+
+#### 5. useActionLog Hook (`src/hooks/useActionLog.ts`)
+**Переносится в UE:** ❌ React специфика
+
+### Интеграция с useRiverGraphV2
+
+Все операции теперь идут через ActionDispatcher:
+
+```typescript
+// BEFORE
+const moveNode = (nodeId, x, y) => {
+  const newGraph = GraphService.moveNode(riverGraph, nodeId, x, y);
+  setRiverGraph(newGraph);
+};
+
+// AFTER (with logging)
+const moveNode = (nodeId, x, y) => {
+  const result = ActionDispatcher.moveNode(riverGraph, nodeId, x, y);
+  if (result.success) {
+    setRiverGraph(result.graph);
+  } else {
+    console.error('Failed to move node:', result.error);
+  }
+};
+```
+
+### Преимущества для UE миграции
+
+1. **Undo/Redo готов из коробки**
+   - Каждое действие = snapshot графа
+   - Можно построить стек для Undo: `history: RiverAction[]`
+   - Redo: `future: RiverAction[]`
+
+2. **Отладка операций**
+   - Полный лог всех изменений
+   - Timing для оптимизации
+   - Ошибки с контекстом
+
+3. **Replay система**
+   - Экспорт в JSON → воспроизведение сессии
+   - Тестирование edge cases
+
+4. **Миграция в UE**
+   - Команды экспортируются как текст
+   - Можно использовать для автогенерации Blueprint тестов
+
+### Использование
+
+**В UI:**
+```tsx
+// Кнопка для открытия лога
+<button onClick={actionLog.toggle}>
+  📋 Echo Log
+</button>
+
+// Панель логов
+<ActionLogPanel
+  isOpen={actionLog.isOpen}
+  onClose={actionLog.close}
+  autoScroll={true}
+/>
+```
+
+**Программно:**
+```typescript
+import { actionLogger } from '@/core/actions';
+
+// Получить все действия
+const actions = actionLogger.getActions();
+
+// Получить только ошибки
+const errors = actionLogger.getErrors();
+
+// Экспорт в JSON
+const json = actionLogger.exportToJSON();
+console.log(json);
+
+// Статистика
+const stats = actionLogger.getStats();
+// { totalActions: 42, totalErrors: 3, averageDuration: 1.5, actionsByType: {...} }
+```
+
+### Пример лога
+
+```json
+{
+  "id": "a7b3c9d2-...",
+  "type": "MERGE_SPLINES",
+  "timestamp": 1699891234567,
+  "duration": 2.3,
+  "description": "Merge splines river2 → river1",
+  "payload": {
+    "draggedSplineId": "river2",
+    "targetSplineId": "river1",
+    "draggedNodeId": "n5",
+    "targetNodeId": "n3"
+  },
+  "before": {
+    "nodeCount": 8,
+    "splineCount": 2,
+    "rootCount": 2,
+    "isValid": true
+  },
+  "after": {
+    "nodeCount": 7,
+    "splineCount": 1,
+    "rootCount": 1,
+    "isValid": true
+  }
+}
+```
 
 ---
 
@@ -230,33 +551,188 @@ interface Edge {
 
 ---
 
+## 📐 Инварианты DAG (I1-I5)
+
+**Критические правила топологии, обеспечивающие корректность графа:**
+
+### I1: Валидация parentId
+```typescript
+// Spline с parentId должен иметь валидного родителя
+spline.parentId !== null ⇒ graph.splines[spline.parentId] !== undefined
+```
+
+### I2: Ациклический граф (No Cycles)
+```typescript
+// Граф должен быть DAG - никаких циклов
+// Проверка: traverseUp(spline) никогда не возвращается к начальному spline
+```
+
+### I3: Двунаправленная консистентность (Parent ⟺ Children)
+```typescript
+// Если A - родитель B, то B - в children A
+spline.parentId === parentId ⇒ parent.children.includes(spline.id)
+spline.id ∈ parent.children ⇒ spline.parentId === parent.id
+```
+
+### I4: Валидация parentJunction
+```typescript
+// Junction должен быть в nodeIds родителя (НЕ в истоке)
+spline.parentJunction !== null ⇒
+  parent.nodeIds.includes(spline.parentJunction) &&
+  parent.nodeIds.indexOf(spline.parentJunction) > 0
+```
+
+### I5: Ограничение глубины дерева (depth ≤ 2)
+```typescript
+// Максимальная глубина = 2 (River → Tributary → Stream)
+function getDepth(spline: Spline, graph: RiverGraphV2): number {
+  let depth = 0;
+  let current = spline;
+  while (current.parentId !== null) {
+    depth++;
+    current = graph.splines[current.parentId];
+  }
+  return depth; // должно быть ≤ 2
+}
+
+// Stream (level 2) НЕ может иметь детей
+spline.kind === 'stream' ⇒ spline.children.length === 0
+```
+
+---
+
+## 🔍 Multiple Roles Problem
+
+**Проблема:** Узел может одновременно быть source, mouth и junction.
+
+**Пример:**
+```typescript
+// До удаления n1:
+River A: [n1] → [n2] → [n3]
+Tributary: [n4] → [n1]  // n1 = junction
+
+// После удаления n1:
+River A: [n2] → [n3]     // n2 теперь source
+Tributary: [n4] → [n2]   // n2 теперь mouth (и junction)
+
+// n2 имеет ТРИ роли одновременно:
+// - source для River A
+// - mouth для Tributary
+// - junction (т.к. в n2 сходятся River A и Tributary)
+```
+
+**Решение - getNodeRoles():**
+```typescript
+interface NodeRoles {
+  primary: NodeKind;           // Приоритизированная роль
+  isJunction: boolean;         // Узел-пересечение
+  asSourceOf: SplineId[];      // Является истоком для...
+  asMouthOf: SplineId[];       // Является устьем для...
+  asInnerOf: SplineId[];       // Является внутренней точкой для...
+}
+
+function getNodeRoles(graph: RiverGraphV2, nodeId: NodeId): NodeRoles {
+  const containingSplines = findSplinesContainingNode(graph, nodeId);
+
+  for (const [splineId, spline] of containingSplines) {
+    const index = spline.nodeIds.indexOf(nodeId);
+    if (index === 0) asSourceOf.push(splineId);
+    else if (index === spline.nodeIds.length - 1) asMouthOf.push(splineId);
+    else asInnerOf.push(splineId);
+  }
+
+  const isJunction = containingSplines.length > 1;
+  // ... determine primary based on priority
+  return { primary, isJunction, asSourceOf, asMouthOf, asInnerOf };
+}
+```
+
+**Применение:**
+- `computeNodeKind()` → возвращает `primary` (legacy compatibility)
+- UI tooltips → показывают все роли для debugging
+- Валидация операций → проверяют конкретные роли
+
+---
+
 ## 🎯 Критические багфиксы (P0)
 
-Эти баги исправляются сразу в Node-Edge структуре:
+Эти баги исправлены в текущей реализации:
 
-### 1. FlowSign как явное поле
+### 1. Stream поведение (FIXED)
 
-**Проблема:** Направление потока определялось неявно по порядку точек.
+**Проблема:** Stream вёл себя как самостоятельная река - мог создавать притоки, вставлять точки как river.
 
-**Решение:** Добавить `flowSign: 1 | -1` в Edge.
-- Main edge: `flowSign = 1` (от истока к устью)
-- Tributary: `flowSign = -1` (от истока к устью, но устье = junction)
+**Root Cause:** Логика проверяла `kind === 'tributary'`, пропуская `kind === 'stream'`.
 
-### 2. segIndexAt для правильного snap
+**Решение:**
+```typescript
+// Было: if (spline.kind === 'tributary') { ... }
+// Стало: if (spline.parentId !== null) { ... }
+
+const isAttachedChild = activeSpline.parentId !== null;
+```
+
+### 2. Stream не отсоединялся при удалении junction (FIXED)
+
+**Проблема:** `detachTributary()` принимал только `kind === 'tributary'`, бросал ошибку для stream.
+
+**Решение:**
+```typescript
+// Было: if (spline.kind !== 'tributary') throw new Error(...)
+// Стало:
+if (spline.kind !== 'tributary' && spline.kind !== 'stream') {
+  throw new Error('Spline is not a tributary or stream');
+}
+```
+
+### 3. Kind не обновлялся автоматически (FIXED)
+
+**Проблема:** После топологических изменений kind оставался старым (tributary мог стать stream).
+
+**Решение - refreshAllSplineKinds():**
+```typescript
+function refreshAllSplineKinds(graph: RiverGraphV2): void {
+  for (const splineId of Object.keys(graph.splines)) {
+    const correctKind = determineSplineKind(graph, splineId);
+    if (spline.kind !== correctKind) {
+      graph.splines[splineId] = { ...spline, kind: correctKind };
+    }
+  }
+}
+
+// Вызывается после: deleteNode, detachTributary, mergeSplines
+```
+
+### 4. Отсутствие логов auto-deletion (FIXED)
+
+**Проблема:** Cascade deletions (splines < 2 nodes, orphaned nodes) не логировались.
+
+**Решение:**
+```typescript
+// Track before/after state
+const beforeSplineIds = new Set(Object.keys(riverGraph.splines));
+const afterSplineIds = new Set(Object.keys(newGraph.splines));
+
+// Log deleted splines
+deletedSplines.forEach(splineId => {
+  actionLogger.log('DELETE_SPLINE',
+    `Spline ${splineId.slice(0, 8)}... auto-deleted (< 2 nodes)`, ...);
+});
+
+// Log deleted nodes
+deletedNodes.forEach(nodeId => {
+  actionLogger.log('DELETE_NODE',
+    `Node ${nodeId.slice(0, 8)}... auto-deleted (orphaned)`, ...);
+});
+```
+
+### 5. segIndexAt для правильного snap
 
 **Проблема:** `Math.floor(sampleIdx / curveSegments)` давал off-by-one из-за начального push.
 
 **Решение:** Кэш кривой хранит `segIndexAt: Uint16Array` - для каждого sample → индекс контрольного сегмента.
 
-### 3. Pointer events + capture
-
-**Проблема:** Drag терялся при выходе мыши за canvas (особенно Safari).
-
-**Решение:**
-- SVG с `pointerEvents: 'auto'`
-- `setPointerCapture()` / `releasePointerCapture()`
-
-### 4. devicePixelRatio
+### 6. devicePixelRatio
 
 **Проблема:** Размытость на Retina дисплеях.
 
@@ -363,15 +839,18 @@ class URiverPCGNode : public UPCGSettings {
 
 ## 📊 Текущее состояние vs Целевое
 
-| Компонент | Текущее | Целевое (после рефакторинга) | UE5.6 эквивалент |
-|-----------|---------|------------------------------|------------------|
-| **Модель данных** | RiverGraph (main+tribs) | RiverGraphV2 (nodes+edges) | FRiverGraph (TMap) |
-| **Операции** | RiverGraphService (class) | GraphOperations (pure fn) | URiverGraphLibrary |
-| **Геометрия** | getCurvePoints (custom) | getCurvePoints + cache | USplineComponent |
-| **FlowSign** | ❌ Неявный (порядок точек) | ✅ Явный (flowSign field) | int32 FlowSign |
-| **Snap** | ❌ Ломается (off-by-one) | ✅ segIndexAt в кэше | GetInputKeyClosest |
-| **Рендеринг** | Canvas API | Canvas API | Spline Mesh + Landscape |
-| **UI** | React components | React components | Slate widgets |
+| Компонент | Текущее состояние | UE5.6 эквивалент |
+|-----------|-------------------|------------------|
+| **Модель данных** | ✅ RiverGraphV2 (nodes+splines, 3-level DAG) | FRiverGraph (TMap) |
+| **Иерархия** | ✅ River → Tributary → Stream (depth ≤ 2) | Nested USplineComponents |
+| **Операции** | ✅ GraphOperations (pure fn) | URiverGraphLibrary |
+| **Инварианты** | ✅ I1-I5 (явная валидация) | Blueprint validators |
+| **Геометрия** | ✅ getCurvePoints + cache + segIndexAt | USplineComponent |
+| **Node Roles** | ✅ getNodeRoles() (multiple roles) | Blueprint helper functions |
+| **Auto-refresh** | ✅ refreshAllSplineKinds() | Blueprint event hooks |
+| **Snap** | ✅ segIndexAt в кэше | GetInputKeyClosest |
+| **Рендеринг** | Canvas API | Spline Mesh + Landscape |
+| **UI** | React components | Slate widgets |
 
 ---
 

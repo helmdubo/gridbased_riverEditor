@@ -19,7 +19,11 @@ import type { Point } from '@/core/geometry/geometry';
 import type { FlowField } from './FlowService';
 import type { SplineSnapInfo, SegmentInfo, InsertPointPreview } from '@domain/models/types';
 import { distanceToCurve } from '@domain/utils';
-import { MARCHING_SQUARES_CASES, COLORS, DEFAULT_MAIN_RIVERBED_WIDTH } from '@domain/constants';
+import {
+  MARCHING_SQUARES_CASES,
+  COLORS,
+  DEFAULT_MAIN_RIVERBED_WIDTH
+} from '@domain/constants';
 
 export interface RenderOptionsV2 {
   showFlowMap: boolean;
@@ -329,7 +333,7 @@ export class RenderServiceV2 {
   }
 
   /**
-   * Render contours with marching squares
+   * Render contours with marching squares and two-level grid (middle + small cells)
    */
   private static renderContours(
     ctx: CanvasRenderingContext2D,
@@ -338,19 +342,59 @@ export class RenderServiceV2 {
     gridSize: number,
     allCurves: CurveData[]
   ): void {
+    // First pass: Draw small cell grid lines (thin, subtle)
+    ctx.strokeStyle = COLORS.GRID_LINE_SMALL;
+    ctx.lineWidth = 1;
+
+    for (let row = 0; row <= rows; row++) {
+      const y = row * gridSize;
+      // Skip every 3rd line (will be drawn as middle cell)
+      if (row % 3 !== 0) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(cols * gridSize, y);
+        ctx.stroke();
+      }
+    }
+
+    for (let col = 0; col <= cols; col++) {
+      const x = col * gridSize;
+      // Skip every 3rd line (will be drawn as middle cell)
+      if (col % 3 !== 0) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, rows * gridSize);
+        ctx.stroke();
+      }
+    }
+
+    // Second pass: Draw middle cell grid lines (thicker, more visible)
+    ctx.strokeStyle = COLORS.GRID_LINE_MIDDLE;
+    ctx.lineWidth = 2;
+
+    for (let row = 0; row <= rows; row += 3) {
+      const y = row * gridSize;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(cols * gridSize, y);
+      ctx.stroke();
+    }
+
+    for (let col = 0; col <= cols; col += 3) {
+      const x = col * gridSize;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, rows * gridSize);
+      ctx.stroke();
+    }
+
+    // Third pass: Draw contours with marching squares
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
-        const x = col * gridSize;
-        const y = row * gridSize;
-
-        // Draw grid lines
-        ctx.strokeStyle = COLORS.GRID_LINE;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, gridSize, gridSize);
-
         if (allCurves.length === 0) continue;
 
-        // Draw contours
+        const x = col * gridSize;
+        const y = row * gridSize;
         const caseIndex = this.getMarchingSquaresCase(col, row, gridSize, allCurves);
         const contourSegments = MARCHING_SQUARES_CASES[caseIndex];
 

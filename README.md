@@ -27,29 +27,38 @@
 
 ## 🏗️ Архитектура
 
-### Node-Edge Graph Model
+### Node-Edge Graph Model с 3-уровневой иерархией
 
-Проект использует **Node-Edge архитектуру**, готовую к портированию в UE5.6:
+Проект использует **Node-Edge архитектуру** с поддержкой 3-уровневой DAG иерархии, готовую к портированию в UE5.6:
 
 ```typescript
 // Граф речной системы
 interface RiverGraphV2 {
-  nodes: Record<NodeId, Node>;      // Вершины (control points)
-  edges: Record<EdgeId, Edge>;      // Реки (main + tributaries)
-  mainEdgeId: EdgeId | null;        // ID главной реки
+  nodes: Record<NodeId, Node>;        // Вершины (control points)
+  splines: Record<SplineId, Spline>;  // Сплайны (river + tributary + stream)
 }
 
-// Ребро (река или приток)
-interface Edge {
-  id: EdgeId;
-  kind: 'river' | 'tributary';
+// Сплайн (река, приток или ручей)
+interface Spline {
+  id: SplineId;
+  kind: 'river' | 'tributary' | 'stream';  // 3 уровня иерархии
   nodeIds: string[];                // Порядок = направление течения
-  parentId: EdgeId | null;          // Родительская река (для притоков)
-  parentJunction: NodeId | null;    // Узел присоединения
+  parentId: SplineId | null;        // Родитель (null для river)
+  parentJunction: NodeId | null;    // Узел присоединения к родителю
   width: Width;                     // Ширина
-  children: EdgeId[];               // Дочерние притоки
+  children: SplineId[];             // Дочерние сплайны
 }
 ```
+
+**3-Level DAG Hierarchy (depth ≤ 2):**
+```
+River (level 0)
+  ├─→ Tributary (level 1)
+  │     └─→ Stream (level 2) [max depth]
+  └─→ Tributary (level 1)
+```
+
+**Инварианты I1-I5:** Явные правила топологии обеспечивают корректность DAG структуры (см. `ARCHITECTURE.md`).
 
 ### Многослойная архитектура
 
@@ -70,7 +79,8 @@ Presentation Layer (UI Components)
 
 **Принципы:**
 - Core layer - pure functions (immutable)
-- V1-V7 invariants - строгие правила топологии
+- I1-I5 invariants - строгие правила топологии DAG
+- 3-level hierarchy - River → Tributary → Stream (depth ≤ 2)
 - UE5-compatible types - готово к миграции
 
 Подробнее: [ROADMAP.md](./ROADMAP.md) | [AGENTS.md](./AGENTS.md)
@@ -203,21 +213,46 @@ npm run type-check   # Проверка типов TypeScript
 
 ---
 
-## 🤖 Agent Handoff (2025-12-01)
+## 🤖 Agent Handoff (2025-11-16)
 
 **Состояние редактора**
 
-- Поддерживаются независимые реки (`kind='river'`, `parentId=null`) и притоки с наследованием ширины.
-- Детач притока автоматически переводит его в режим родительской реки с полной функциональностью и стилями.
-- Ползунок ширины синхронизируется с активным сплайном: пиксели для рек, проценты для притоков.
-- Тестовые проверки: `npm run type-check`, `npm run build`.
+- ✅ **3-Level DAG Hierarchy:** River → Tributary → Stream с depth ≤ 2
+- ✅ **Инварианты I1-I5:** Явная валидация топологии (parentId, acyclic, bidirectional, parentJunction, depth)
+- ✅ **Stream behavior fixes:** Stream больше не ведет себя как независимая река
+- ✅ **Auto-refresh kind:** `refreshAllSplineKinds()` после топологических изменений
+- ✅ **Multiple roles solution:** `getNodeRoles()` для узлов с несколькими ролями (source + mouth + junction)
+- ✅ **Comprehensive logging:** Все cascade deletions (splines, nodes) логируются
+- ✅ **Tributary new_branch:** Inner nodes притоков могут создавать streams
+- ✅ **Grid density 3x:** 60x36 (вместо 20x12) для более точного редактирования
+
+**Ключевые файлы с последними изменениями:**
+
+1. `src/core/graph/nodeKinds.ts` - getNodeRoles(), computeNodeKind() refactored
+2. `src/core/graph/operations.ts` - refreshAllSplineKinds(), detachTributary() supports stream
+3. `src/core/graph/validation.ts` - canAttachToNode() enforces I5 (depth ≤ 2)
+4. `src/hooks/useRiverGraphV2.ts` - fixed attached children logic, comprehensive auto-deletion logging
+5. `src/domain/constants/riverConstants.ts` - grid density 60x36
+
+**Критические коммиты этой сессии:**
+
+- `32bbb83` - fix: Stream splines now behave correctly as attached children
+- `5889340` - feat: Prevent stream children and add comprehensive auto-deletion logging
+- `bb4585f` - feat: Add getNodeRoles() to solve "multiple roles" problem
+- `e4b2245` - fix: Allow new_branch creation from inner nodes of tributaries
+- `f7bf917` - feat: Increase grid density to 3x3 cells
+- `4363657` - fix: Correct grid density to 3x (20x12 → 60x36)
 
 **Рекомендации для следующего агента**
 
-1. Ознакомьтесь с разделом «Следующие шаги» в [ROADMAP.md](./ROADMAP.md).
-2. При разработке ориентируйтесь на отказ от legacy-адаптера и перенос FlowService на Node-Edge модель.
-3. Перед началом работы запустите `npm run dev` и убедитесь, что многоречные сцены (3+ реки) и цепочки притоков ведут себя корректно.
-4. При обновлении логики ширины проверяйте, что новые притоки наследуют процентное значение, а независимые реки сохраняют пиксельное.
+1. **Прочитайте ARCHITECTURE.md** - там описаны инварианты I1-I5, Multiple Roles Problem, все критические багфиксы
+2. **Прочитайте AGENTS.md** - полный handoff guide с ключевыми концепциями
+3. **Проверьте grid density** - убедитесь что сетка 60x36 работает корректно
+4. **Тестируйте 3-level hierarchy** - создайте River → Tributary → Stream, проверьте что Stream не может иметь детей
+5. **Проверьте getNodeRoles()** - при удалении узлов убедитесь что роли определяются правильно
+6. **Следующие задачи:** GraphAdapter 2.0, FlowService refactoring, pointer capture
+
+Тестовые проверки: `npm run type-check`, `npm run build`, `npm run dev`
 
 Удачи в следующей сессии! 🚀
 
