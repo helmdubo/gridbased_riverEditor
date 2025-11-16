@@ -329,15 +329,16 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
           return;
         }
 
-        const isTributary = activeSpline.kind === 'tributary';
+        // Treat both 'tributary' and 'stream' the same way (both are attached children)
+        const isAttachedChild = activeSpline.parentId !== null;
         const selectedIndex = selectedNodeId
           ? activeSpline.nodeIds.indexOf(selectedNodeId as string)
           : -1;
         const isSource = selectedIndex === 0;
         const isMouth = selectedIndex === activeSpline.nodeIds.length - 1;
 
-        if (isTributary) {
-          console.log('🌿 Editing tributary spline');
+        if (isAttachedChild) {
+          console.log('🌿 Editing attached child spline (tributary or stream)');
 
           if (isSource || selectedIndex === -1) {
             console.log('⬆️ Extending tributary upstream (away from junction)');
@@ -353,7 +354,8 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
                 y,
                 nodeId: result.nodeId,
                 splineId: resolvedActiveId,
-                isTributary: true,
+                isAttachedChild: true,
+                kind: activeSpline.kind,
                 parentJunction: activeSpline.parentJunction,
                 selectedNode: getSelectedNodeContext(),
               }
@@ -364,7 +366,7 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
             return;
           }
 
-          console.log('🚫 Tributaries can only grow from their source');
+          console.log('🚫 Attached children (tributaries/streams) can only grow from their source');
           return;
         }
 
@@ -490,9 +492,11 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
    */
   const deleteNode = useCallback(
     (nodeId: NodeId) => {
-      // Check if node is a junction (has tributaries attached)
+      // Track state before deletion for logging
       const isJunction = GraphService.isJunctionNode(riverGraph, nodeId);
       const affectedSplines: string[] = [];
+      const beforeSplineIds = new Set(Object.keys(riverGraph.splines));
+      const beforeNodeIds = new Set(Object.keys(riverGraph.nodes));
 
       // Find all splines affected by this deletion
       Object.values(riverGraph.splines).forEach((s) => {
@@ -513,12 +517,20 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
         });
       }
 
+      // Execute deletion
       let newGraph = GraphService.deleteNode(riverGraph, nodeId);
       newGraph = ensureMainSpline(newGraph);
 
-      // Log the deletion with detach info
+      // Track what was automatically deleted
+      const afterSplineIds = new Set(Object.keys(newGraph.splines));
+      const afterNodeIds = new Set(Object.keys(newGraph.nodes));
+
+      const deletedSplines = Array.from(beforeSplineIds).filter(id => !afterSplineIds.has(id));
+      const deletedNodes = Array.from(beforeNodeIds).filter(id => !afterNodeIds.has(id));
+
+      // Log the node deletion
       const description = isJunction
-        ? `Delete junction node ${nodeId.slice(0, 8)}... (detached ${detachedTributaries.length} tributary(ies))`
+        ? `Delete junction node ${nodeId.slice(0, 8)}... (detached ${detachedTributaries.length} child(ren))`
         : `Delete node ${nodeId.slice(0, 8)}...`;
 
       actionLogger.log(
@@ -535,16 +547,64 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
         }
       );
 
-      // Log DETACH operations for each detached tributary
+      // Log DETACH operations for each detached tributary/stream
       if (detachedTributaries.length > 0) {
         detachedTributaries.forEach(tribId => {
+          const detachedSpline = riverGraph.splines[tribId as SplineId];
           actionLogger.log(
             'DETACH_TRIBUTARY',
-            `Tributary ${tribId.slice(0, 8)}... detached due to junction deletion`,
+            `${detachedSpline?.kind || 'Child'} ${tribId.slice(0, 8)}... auto-detached (junction deleted)`,
             riverGraph,
             newGraph,
-            { tributaryId: tribId, junctionNodeId: nodeId, reason: 'junction_deleted', selectedNode: getSelectedNodeContext() }
+            { tributaryId: tribId, junctionNodeId: nodeId, reason: 'junction_deleted', kind: detachedSpline?.kind, selectedNode: getSelectedNodeContext() }
           );
+        });
+      }
+
+      // Log automatic spline deletions (when <2 nodes remain)
+      const autoDeletedSplines = deletedSplines.filter(id => !affectedSplines.includes(id) ||
+        (riverGraph.splines[id as SplineId]?.nodeIds.length ?? 0) <= 2);
+
+      if (autoDeletedSplines.length > 0) {
+        autoDeletedSplines.forEach(splineId => {
+          const deletedSpline = riverGraph.splines[splineId as SplineId];
+          if (deletedSpline) {
+            actionLogger.log(
+              'DELETE_SPLINE',
+              `Spline ${splineId.slice(0, 8)}... auto-deleted (< 2 nodes after node deletion)`,
+              riverGraph,
+              newGraph,
+              {
+                splineId,
+                reason: 'insufficient_nodes',
+                previousNodeCount: deletedSpline.nodeIds.length,
+                kind: deletedSpline.kind,
+                selectedNode: getSelectedNodeContext()
+              }
+            );
+          }
+        });
+      }
+
+      // Log automatic node deletions (orphaned nodes or cascade from spline deletion)
+      const autoDeletedNodes = deletedNodes.filter(id => id !== nodeId);
+      if (autoDeletedNodes.length > 0) {
+        autoDeletedNodes.forEach(autoNodeId => {
+          const deletedNode = riverGraph.nodes[autoNodeId as NodeId];
+          if (deletedNode) {
+            actionLogger.log(
+              'DELETE_NODE',
+              `Node ${autoNodeId.slice(0, 8)}... auto-deleted (orphaned or cascade)`,
+              riverGraph,
+              newGraph,
+              {
+                nodeId: autoNodeId,
+                reason: 'cascade_deletion',
+                kind: deletedNode.kind,
+                selectedNode: getSelectedNodeContext()
+              }
+            );
+          }
         });
       }
 

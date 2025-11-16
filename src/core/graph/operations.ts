@@ -118,6 +118,28 @@ function refreshAllNodeKinds(graph: RiverGraphV2): void {
 }
 
 /**
+ * Recomputes spline kinds for all splines based on current hierarchy (parentId)
+ * This ensures 'river', 'tributary', and 'stream' types are correct after topology changes
+ */
+function refreshAllSplineKinds(graph: RiverGraphV2): void {
+  for (const splineKey of Object.keys(graph.splines)) {
+    const splineId = splineKey as SplineId;
+    const spline = graph.splines[splineId];
+    if (!spline) {
+      continue;
+    }
+
+    const correctKind = determineSplineKind(graph, splineId);
+    if (spline.kind !== correctKind) {
+      graph.splines[splineId] = {
+        ...spline,
+        kind: correctKind,
+      };
+    }
+  }
+}
+
+/**
  * Adds a new node to the graph at the specified position
  *
  * @param graph - Current graph state
@@ -190,8 +212,10 @@ export function deleteNode(graph: RiverGraphV2, nodeId: NodeId): RiverGraphV2 {
       nodeIds: newNodeIds,
     };
 
-    if (spline.kind === 'tributary' && spline.parentJunction === nodeId && spline.parentId) {
-      // Junction removed: detach tributary and let it become independent
+    // If this spline is attached to the deleted node as junction, detach it
+    // Works for both tributary and stream
+    if (spline.parentJunction === nodeId && spline.parentId) {
+      // Junction removed: detach child (tributary or stream) and let it become independent
       detachments.push({ parentId: spline.parentId, childId: splineId as SplineId });
 
       let detachedWidth = spline.attributes.width;
@@ -245,6 +269,7 @@ export function deleteNode(graph: RiverGraphV2, nodeId: NodeId): RiverGraphV2 {
   }
 
   refreshAllNodeKinds(newGraph);
+  refreshAllSplineKinds(newGraph); // Update spline kinds after detachment
 
   syncRootMetadata(newGraph);
 
@@ -567,20 +592,22 @@ export function attachTributary(
 }
 
 /**
- * Detaches a tributary from its parent river, making it an independent river
+ * Detaches a tributary or stream from its parent river, making it an independent river
  *
  * This operation (following invariants V2-V4, V7):
- * 1. Removes tributary from parent's children array
- * 2. Sets tributary's parentId = null
+ * 1. Removes tributary/stream from parent's children array
+ * 2. Sets child's parentId = null
  * 3. Sets parentJunction = null
  * 4. Changes kind to 'river'
  * 5. Keeps width as-is (V7: width remains frozen in px)
  * 6. Optionally creates a new mouth node to separate from junction
  *
+ * Works for both 'tributary' (level 1) and 'stream' (level 2) splines.
+ *
  * @param graph - Current graph state
- * @param tribEdgeId - ID of tributary spline to detach
+ * @param tribEdgeId - ID of tributary or stream spline to detach
  * @param createNewMouthNode - If true, creates a new node for the mouth (default: false)
- * @returns New graph with tributary detached (and optionally new mouth node ID)
+ * @returns New graph with child detached (and optionally new mouth node ID)
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
@@ -596,16 +623,18 @@ export function detachTributary(
   const tribSpline = newGraph.splines[tribSplineId];
 
   if (!tribSpline) {
-    throw new Error(`Tributary spline ${tribSplineId} not found`);
+    throw new Error(`Child spline ${tribSplineId} not found`);
   }
 
-  if (tribSpline.kind !== 'tributary') {
-    throw new Error(`Spline ${tribSplineId} is not a tributary`);
-  }
-
+  // Check if spline is attached (has parent) - works for both tributary and stream
   const parentSplineId = tribSpline.parentId;
   if (!parentSplineId) {
-    throw new Error(`Tributary ${tribSplineId} has no parent (already detached?)`);
+    throw new Error(`Spline ${tribSplineId} has no parent (already detached?)`);
+  }
+
+  // Validate it's actually a child (tributary or stream)
+  if (tribSpline.kind !== 'tributary' && tribSpline.kind !== 'stream') {
+    throw new Error(`Spline ${tribSplineId} is not a tributary or stream (kind: ${tribSpline.kind})`);
   }
 
   // Get mouth node (last node in tributary)
@@ -672,10 +701,9 @@ export function detachTributary(
   }
 
   refreshAllNodeKinds(newGraph);
+  refreshAllSplineKinds(newGraph); // Update spline kinds after detachment
 
   syncRootMetadata(newGraph);
-
-  refreshAllNodeKinds(newGraph);
 
   return {
     graph: newGraph,
@@ -1326,6 +1354,7 @@ export function mergeSplines(
   }
 
   refreshAllNodeKinds(newGraph);
+  refreshAllSplineKinds(newGraph); // Update kinds for transferred children
 
   syncRootMetadata(newGraph);
 

@@ -36,44 +36,102 @@ function findSplinesContainingNode(graph: RiverGraphV2, nodeId: NodeId) {
 }
 
 /**
- * Derives node kind based on current topology
+ * Get all roles of a node (comprehensive classification)
+ *
+ * A node can have multiple roles simultaneously:
+ * - junction (belongs to 2+ splines)
+ * - source (first node in some spline)
+ * - mouth (last node in some spline)
+ * - inner (middle node in some spline)
+ *
+ * Example: After deleting first node of parent river:
+ *   River A: [n2] → [n3]  (n2 is source)
+ *              ↑
+ *   Tributary: [n4] → [n2] (n2 is mouth)
+ *   → n2 roles: junction=true, asSourceOf=[A], asMouthOf=[Tributary]
+ *
+ * @param graph - River graph
+ * @param nodeId - Node to analyze
+ * @returns Complete role information
+ */
+export interface NodeRoles {
+  /** Primary classification (used for UI icon priority) */
+  primary: NodeKind;
+  /** Is this node a junction (belongs to 2+ splines)? */
+  isJunction: boolean;
+  /** Splines where this node is the source (first node) */
+  asSourceOf: SplineId[];
+  /** Splines where this node is the mouth (last node) */
+  asMouthOf: SplineId[];
+  /** Splines where this node is inner (middle node) */
+  asInnerOf: SplineId[];
+}
+
+export function getNodeRoles(graph: RiverGraphV2, nodeId: NodeId): NodeRoles {
+  const containingSplines = findSplinesContainingNode(graph, nodeId);
+
+  const asSourceOf: SplineId[] = [];
+  const asMouthOf: SplineId[] = [];
+  const asInnerOf: SplineId[] = [];
+
+  for (const [splineId, spline] of containingSplines) {
+    const nodeIndex = spline.nodeIds.indexOf(nodeId as string);
+
+    if (nodeIndex === 0) {
+      asSourceOf.push(splineId as SplineId);
+    } else if (nodeIndex === spline.nodeIds.length - 1) {
+      asMouthOf.push(splineId as SplineId);
+    } else if (nodeIndex > 0) {
+      asInnerOf.push(splineId as SplineId);
+    }
+  }
+
+  const isJunction = containingSplines.length > 1;
+
+  // Determine primary kind (for backwards compatibility and UI priority)
+  let primary: NodeKind = 'inner';
+  if (isJunction) {
+    primary = 'junction';
+  } else if (asSourceOf.length > 0) {
+    primary = 'source';
+  } else if (asMouthOf.length > 0) {
+    primary = 'mouth';
+  } else if (asInnerOf.length > 0) {
+    primary = 'inner';
+  }
+
+  return {
+    primary,
+    isJunction,
+    asSourceOf,
+    asMouthOf,
+    asInnerOf,
+  };
+}
+
+/**
+ * Derives node kind based on current topology (LEGACY - prioritized classification)
+ *
+ * This function returns only ONE primary kind, using priority:
+ * junction > source > mouth > inner
+ *
+ * IMPORTANT: This loses information when a node has multiple roles!
+ * Example: node that is both source AND mouth AND junction will return only 'junction'.
+ *
+ * For complete role information, use getNodeRoles() instead.
  *
  * @param graph - River graph
  * @param nodeId - Node to classify
- * @returns Node kind classification
+ * @returns Primary node kind classification
  *
  * @ue_equivalent
  * UFUNCTION(BlueprintCallable)
  * static ERiverNodeKind DeriveNodeKind(const FRiverGraph& Graph, FGuid NodeId);
  */
 export function computeNodeKind(graph: RiverGraphV2, nodeId: NodeId): NodeKind {
-  const node = graph.nodes[nodeId];
-  if (!node) {
-    return 'inner';
-  }
-
-  const containingSplines = findSplinesContainingNode(graph, nodeId);
-
-  if (containingSplines.length === 0) {
-    return 'inner';
-  }
-
-  if (containingSplines.length > 1) {
-    return 'junction';
-  }
-
-  const [, spline] = containingSplines[0];
-  const nodeIndex = spline.nodeIds.indexOf(nodeId as string);
-
-  if (nodeIndex <= 0) {
-    return 'source';
-  }
-
-  if (nodeIndex === spline.nodeIds.length - 1) {
-    return 'mouth';
-  }
-
-  return 'inner';
+  // Use getNodeRoles for comprehensive analysis
+  const roles = getNodeRoles(graph, nodeId);
+  return roles.primary;
 }
 
 /**
