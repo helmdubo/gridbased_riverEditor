@@ -92,7 +92,8 @@ src/
 ├── services/                      # 🔄 ЧАСТИЧНО ПЕРЕНОСИТСЯ
 │   ├── GraphService.ts           # → Blueprint Function Library
 │   ├── FlowService.ts            # → Blueprint Function Library
-│   └── RenderService.ts          # ❌ НЕ ПЕРЕНОСИТСЯ (UE rendering)
+│   ├── RenderService.ts          # ❌ НЕ ПЕРЕНОСИТСЯ (UE rendering)
+│   └── ActionDispatcher.ts       # → Logging middleware для операций
 │
 ├── hooks/                         # ❌ НЕ ПЕРЕНОСИТСЯ
 │   └── useRiverGraph.ts          # React специфика
@@ -144,6 +145,299 @@ RenderService → Spline Mesh Components + Landscape
 - React hooks → Blueprint variables + events
 - Canvas rendering → Spline Meshes + PCG
 - SVG overlay → Slate widgets в Editor Mode
+
+---
+
+## 📋 Echo Log система (Debugging & Logging)
+
+### Назначение
+Maya-style Echo Command система для отладки операций с графом рек. Записывает полный контекст каждой операции: входные параметры, состояние графа до/после, время выполнения, ошибки.
+
+### Архитектура
+
+```
+User Action (UI)
+      ↓
+useRiverGraphV2 (hook)
+      ↓
+ActionDispatcher (middleware)  ← перехватывает операцию
+      ↓
+GraphService operation
+      ↓
+ActionLogger.log()  ← записывает в лог
+      ↓
+ActionLogPanel (UI)  ← отображает логи
+```
+
+### Компоненты
+
+#### 1. Action Types (`src/core/actions/types.ts`)
+**Переносится в UE:** ✅ Частично (для Undo/Redo и отладки)
+
+```typescript
+// 20+ типов действий
+type RiverActionType =
+  | 'ADD_NODE' | 'MOVE_NODE' | 'DELETE_NODE'
+  | 'MERGE_NODES' | 'MERGE_SPLINES'
+  | 'ATTACH_TRIBUTARY' | 'DETACH_TRIBUTARY'
+  | 'CREATE_SPLINE' | 'DELETE_SPLINE'
+  // ...
+
+interface RiverAction {
+  id: string;
+  type: RiverActionType;
+  payload: ActionPayload;      // Параметры операции
+  timestamp: number;
+  before: GraphSnapshot;        // Состояние ДО
+  after: GraphSnapshot;         // Состояние ПОСЛЕ
+  duration: number;             // Время выполнения (мс)
+  error?: ErrorDetails;         // Ошибка + stack trace
+  description: string;          // "Attach tributary t3 to river main at node n7"
+}
+
+interface GraphSnapshot {
+  nodeCount: number;
+  splineCount: number;
+  rootCount: number;
+  splineIds: string[];
+  nodeIds: string[];
+  isValid: boolean;
+  validationError?: string;
+}
+```
+
+**UE эквивалент:**
+```cpp
+USTRUCT(BlueprintType)
+struct FRiverAction {
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadOnly)
+    FGuid ActionID;
+
+    UPROPERTY(BlueprintReadOnly)
+    ERiverActionType Type;
+
+    UPROPERTY(BlueprintReadOnly)
+    FDateTime Timestamp;
+
+    UPROPERTY(BlueprintReadOnly)
+    FRiverGraphSnapshot Before;
+
+    UPROPERTY(BlueprintReadOnly)
+    FRiverGraphSnapshot After;
+};
+```
+
+#### 2. ActionLogger Service (`src/core/actions/logger.ts`)
+**Переносится в UE:** ✅ Да (для Undo/Redo)
+
+**Возможности:**
+- Циркулярный буфер (500 записей) для экономии памяти
+- Фильтрация по типам действий, временным диапазонам, ошибкам
+- Экспорт в JSON (для replay/анализа)
+- Экспорт в Maya-style commands (для миграции)
+- Статистика (средняя длительность, частота ошибок)
+
+**API:**
+```typescript
+class ActionLogger {
+  log(type, payload, before, after, duration, error?): RiverAction
+  getActions(): RiverAction[]
+  getErrors(): RiverAction[]
+  exportToJSON(): string
+  exportAsCommands(): string
+  getStats(): LogStatistics
+}
+
+export const actionLogger = new ActionLogger();  // Singleton
+```
+
+**UE эквивалент:**
+```cpp
+UCLASS()
+class URiverActionLogger : public UObject {
+    UFUNCTION(BlueprintCallable)
+    void LogAction(ERiverActionType Type, const FRiverGraph& Before, const FRiverGraph& After);
+
+    UFUNCTION(BlueprintCallable)
+    TArray<FRiverAction> GetActionHistory() const;
+};
+```
+
+#### 3. ActionDispatcher Middleware (`src/services/ActionDispatcher.ts`)
+**Переносится в UE:** 🔄 Частично (логика логирования)
+
+**Паттерн:**
+```typescript
+class ActionDispatcher {
+  private static dispatch<T>(
+    graph: RiverGraphV2,
+    payload: ActionPayload,
+    executor: (graph) => RiverGraphV2
+  ): DispatchResult {
+    const startTime = performance.now();
+    const before = createSnapshot(graph);
+
+    let resultGraph = graph;
+    let error: Error | undefined;
+
+    try {
+      resultGraph = executor(graph);
+    } catch (err) {
+      error = err;
+      resultGraph = graph;  // Keep original on error
+    }
+
+    const duration = performance.now() - startTime;
+    const after = createSnapshot(resultGraph, { includeValidation: true });
+
+    const action = actionLogger.log(type, payload, before, after, duration, error);
+
+    return {
+      graph: resultGraph,
+      actionId: action.id,
+      success: !error,
+      error,
+    };
+  }
+
+  // Wrapped operations
+  static moveNode(graph, nodeId, x, y): DispatchResult { }
+  static deleteNode(graph, nodeId): DispatchResult { }
+  static mergeSplines(graph, draggedNodeId, targetNodeId): DispatchResult { }
+  // ... all graph operations
+}
+```
+
+**В UE:** Можно использовать для Undo/Redo стека и отладки Blueprint операций.
+
+#### 4. ActionLogPanel UI (`src/components/ActionLog/ActionLogPanel.tsx`)
+**Переносится в UE:** ❌ Не переносится (будет UMG/Slate)
+
+**Функции:**
+- Консольный интерфейс с темной темой
+- Хронологический список действий
+- Фильтры (по типам, только ошибки, поиск)
+- Экспорт (JSON, Commands)
+- Copy-to-clipboard
+- Отображение изменений графа (nodes: 5→6 | splines: 2→3)
+- Подсветка ошибок + stack trace
+- Автопрокрутка к новым записям
+- Статистика (avg duration, total errors)
+
+**UE эквивалент:** Editor Mode Tool с Slate UI или Output Log интеграция.
+
+#### 5. useActionLog Hook (`src/hooks/useActionLog.ts`)
+**Переносится в UE:** ❌ React специфика
+
+### Интеграция с useRiverGraphV2
+
+Все операции теперь идут через ActionDispatcher:
+
+```typescript
+// BEFORE
+const moveNode = (nodeId, x, y) => {
+  const newGraph = GraphService.moveNode(riverGraph, nodeId, x, y);
+  setRiverGraph(newGraph);
+};
+
+// AFTER (with logging)
+const moveNode = (nodeId, x, y) => {
+  const result = ActionDispatcher.moveNode(riverGraph, nodeId, x, y);
+  if (result.success) {
+    setRiverGraph(result.graph);
+  } else {
+    console.error('Failed to move node:', result.error);
+  }
+};
+```
+
+### Преимущества для UE миграции
+
+1. **Undo/Redo готов из коробки**
+   - Каждое действие = snapshot графа
+   - Можно построить стек для Undo: `history: RiverAction[]`
+   - Redo: `future: RiverAction[]`
+
+2. **Отладка операций**
+   - Полный лог всех изменений
+   - Timing для оптимизации
+   - Ошибки с контекстом
+
+3. **Replay система**
+   - Экспорт в JSON → воспроизведение сессии
+   - Тестирование edge cases
+
+4. **Миграция в UE**
+   - Команды экспортируются как текст
+   - Можно использовать для автогенерации Blueprint тестов
+
+### Использование
+
+**В UI:**
+```tsx
+// Кнопка для открытия лога
+<button onClick={actionLog.toggle}>
+  📋 Echo Log
+</button>
+
+// Панель логов
+<ActionLogPanel
+  isOpen={actionLog.isOpen}
+  onClose={actionLog.close}
+  autoScroll={true}
+/>
+```
+
+**Программно:**
+```typescript
+import { actionLogger } from '@/core/actions';
+
+// Получить все действия
+const actions = actionLogger.getActions();
+
+// Получить только ошибки
+const errors = actionLogger.getErrors();
+
+// Экспорт в JSON
+const json = actionLogger.exportToJSON();
+console.log(json);
+
+// Статистика
+const stats = actionLogger.getStats();
+// { totalActions: 42, totalErrors: 3, averageDuration: 1.5, actionsByType: {...} }
+```
+
+### Пример лога
+
+```json
+{
+  "id": "a7b3c9d2-...",
+  "type": "MERGE_SPLINES",
+  "timestamp": 1699891234567,
+  "duration": 2.3,
+  "description": "Merge splines river2 → river1",
+  "payload": {
+    "draggedSplineId": "river2",
+    "targetSplineId": "river1",
+    "draggedNodeId": "n5",
+    "targetNodeId": "n3"
+  },
+  "before": {
+    "nodeCount": 8,
+    "splineCount": 2,
+    "rootCount": 2,
+    "isValid": true
+  },
+  "after": {
+    "nodeCount": 7,
+    "splineCount": 1,
+    "rootCount": 1,
+    "isValid": true
+  }
+}
+```
 
 ---
 
