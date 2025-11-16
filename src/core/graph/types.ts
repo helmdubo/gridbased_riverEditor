@@ -118,6 +118,7 @@ export interface RiverAttributes {
  * - V5: parentJunction ∈ parent.nodeIds[1..last] (cannot attach to source, can attach to mouth)
  * - V6: parentId is unique (one parent only)
  * - V7: width constraints enforced on attach/detach
+ * - V8: no cycles in parent chain (walking up parentId must terminate at null)
  *
  * @ue_equivalent
  * USTRUCT(BlueprintType)
