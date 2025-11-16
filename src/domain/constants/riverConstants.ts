@@ -67,8 +67,8 @@ export const SPLINE_TENSION = 0.5;
 
 /** Grid and canvas colors */
 export const COLORS = {
-  BACKGROUND: '#1a1a1a',
-  GRID_LINE: '#333',
+  BACKGROUND: '#808080',
+  GRID_LINE: '#e8e8e8',
   WATER_FULL: 'rgba(64, 164, 223, 0.25)',
   LAND_FULL: 'rgba(139, 90, 43, 0.3)',
   MIXED: 'rgba(104, 131, 62, 0.35)',
