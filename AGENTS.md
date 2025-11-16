@@ -1,7 +1,7 @@
 # 🤖 AGENTS.md - AI Agent Handoff Guide
 
 **Последнее обновление:** 2025-11-16
-**Текущая фаза:** Фаза 3 завершена + Echo Log система добавлена
+**Текущая фаза:** 3-Level DAG Hierarchy реализована - Stream behavior fixes завершены
 **Статус:** ✅ Stable - готово к тестированию и дальнейшей разработке
 
 ---
@@ -14,10 +14,18 @@
 
 **Текущее состояние:**
 - ✅ Node-Edge архитектура полностью реализована
+- ✅ **3-Level DAG Hierarchy:** River → Tributary → Stream с depth ≤ 2
+- ✅ **Инварианты I1-I5:** Явная валидация топологии
 - ✅ Core модуль (types, operations, validation, geometry) работает
 - ✅ UI интеграция завершена (useRiverGraphV2, GraphService, GraphAdapter)
 - ✅ Базовые операции: создание реки, добавление/удаление/перемещение вершин
 - ✅ Extend upstream/downstream работают корректно
+- ✅ **Stream behavior fixes:** Stream больше не ведет себя как независимая река
+- ✅ **Multiple roles solution:** getNodeRoles() для узлов с несколькими ролями
+- ✅ **Auto-refresh kind:** refreshAllSplineKinds() после топологических изменений
+- ✅ **Comprehensive logging:** Все cascade deletions логируются
+- ✅ **Tributary new_branch:** Inner nodes притоков могут создавать streams
+- ✅ **Grid density 3x:** 60x36 для более точного редактирования
 - ✅ Comprehensive debugger показывает полную структуру графа
 - ✅ **Echo Log система для отладки** (Maya-style action logging)
 - 🚧 Multi-river support (в разработке)
@@ -80,9 +88,8 @@
 **RiverGraphV2:**
 ```typescript
 interface RiverGraphV2 {
-  nodes: Record<NodeId, Node>;      // Все вершины на карте
-  edges: Record<EdgeId, Edge>;      // Все реки (main + tributaries)
-  mainEdgeId: EdgeId | null;        // ID главной реки
+  nodes: Record<NodeId, Node>;        // Все вершины на карте
+  splines: Record<SplineId, Spline>;  // Все сплайны (river + tributary + stream)
 }
 ```
 
@@ -95,18 +102,31 @@ interface Node {
 }
 ```
 
-**Edge (River):**
+**Spline (3-Level Hierarchy):**
 ```typescript
-interface Edge {
-  id: EdgeId;
-  kind: 'river' | 'tributary';
+interface Spline {
+  id: SplineId;
+  kind: 'river' | 'tributary' | 'stream';  // 3 уровня иерархии
   nodeIds: string[];                // Порядок определяет направление течения
-  parentId: EdgeId | null;          // ID родительской реки (null для main/detached)
+  parentId: SplineId | null;        // ID родителя (null для river)
   parentJunction: NodeId | null;    // Узел присоединения к родителю
-  width: Width;                     // Ширина реки
-  children: EdgeId[];               // ID притоков
+  width: Width;                     // Ширина
+  children: SplineId[];             // ID дочерних сплайнов
 }
 ```
+
+**3-Level DAG Hierarchy:**
+```
+River (level 0)
+  ├─→ Tributary (level 1)
+  │     └─→ Stream (level 2) [max depth]
+  └─→ Tributary (level 1)
+```
+
+**Правила иерархии:**
+- **River**: `parentId = null`, может иметь children
+- **Tributary**: `parentId = River`, может иметь children (streams)
+- **Stream**: `parentId = Tributary`, **НЕ может** иметь children (max depth)
 
 **Width:**
 ```typescript
@@ -116,17 +136,22 @@ interface Width {
 }
 ```
 
-### 2. V1-V7 Инварианты (Domain Rules)
+### 2. I1-I5 Инварианты (DAG Topology Rules)
 
 **ВАЖНО:** Эти инварианты должны соблюдаться во всех операциях!
 
-- **V1 (Direction):** `nodeIds` упорядочены от истока к устью (downstream)
-- **V2 (Tributary ⇔ Parent):** `kind === 'tributary'` ⇔ `parentId !== null && parentJunction !== null`
-- **V3 (No Nested Tributaries):** `children.length > 0` ⇒ `parentId === null`
-- **V4 (Detached Cleanup):** `parentId === null` ⇒ `parentJunction === null`
-- **V5 (Junction Position):** `parentJunction ∈ parent.nodeIds[1..last]` (не исток!)
-- **V6 (Unique Parent):** Каждый tributary имеет только одного родителя
-- **V7 (Width Constraints):** При attach/detach применяются правила ширины
+- **I1 (Валидация parentId):** `spline.parentId !== null` ⇒ `graph.splines[spline.parentId] !== undefined`
+- **I2 (Ациклический граф):** Граф должен быть DAG - никаких циклов. Проверка: `traverseUp(spline)` никогда не возвращается к начальному spline
+- **I3 (Двунаправленная консистентность):** Если A - родитель B, то B - в children A:
+  - `spline.parentId === parentId` ⇒ `parent.children.includes(spline.id)`
+  - `spline.id ∈ parent.children` ⇒ `spline.parentId === parent.id`
+- **I4 (Валидация parentJunction):** Junction должен быть в nodeIds родителя (НЕ в истоке):
+  - `spline.parentJunction !== null` ⇒ `parent.nodeIds.includes(spline.parentJunction)`
+  - `parent.nodeIds.indexOf(spline.parentJunction) > 0`
+- **I5 (Ограничение глубины ≤ 2):** Максимальная глубина дерева = 2:
+  - River (level 0) → Tributary (level 1) → Stream (level 2)
+  - `spline.kind === 'stream'` ⇒ `spline.children.length === 0`
+  - Stream НЕ может иметь детей (нарушило бы depth > 2)
 
 ### 3. Направление течения (Flow Direction)
 
@@ -138,24 +163,68 @@ interface Width {
 - Течение всегда от nodeIds[0] → nodeIds[last]
 - Для изменения направления: `reverseEdge()` - разворачивает массив nodeIds
 
-### 4. Производные свойства (Derived Properties)
+### 4. Multiple Roles Problem и getNodeRoles()
 
-Эти свойства **НЕ хранятся** в Edge, а вычисляются:
+**Проблема:** Узел может одновременно быть source, mouth и junction.
+
+**Пример:**
+```typescript
+// До удаления n1:
+River A: [n1] → [n2] → [n3]
+Tributary: [n4] → [n1]  // n1 = junction
+
+// После удаления n1:
+River A: [n2] → [n3]     // n2 теперь source
+Tributary: [n4] → [n2]   // n2 теперь mouth (и junction)
+
+// n2 имеет ТРИ роли одновременно:
+// - source для River A
+// - mouth для Tributary
+// - junction (т.к. в n2 сходятся River A и Tributary)
+```
+
+**Решение - getNodeRoles():**
+```typescript
+interface NodeRoles {
+  primary: NodeKind;           // Приоритизированная роль
+  isJunction: boolean;         // Узел-пересечение
+  asSourceOf: SplineId[];      // Является истоком для...
+  asMouthOf: SplineId[];       // Является устьем для...
+  asInnerOf: SplineId[];       // Является внутренней точкой для...
+}
+
+// Использование:
+const roles = getNodeRoles(graph, nodeId);
+// roles.asSourceOf = [riverA_id]
+// roles.asMouthOf = [tributary_id]
+// roles.isJunction = true
+// roles.primary = 'junction' (highest priority)
+```
+
+**Приоритет определения primary:**
+1. Junction (несколько сплайнов) - высший приоритет
+2. Source (исток)
+3. Mouth (устье)
+4. Inner (внутренняя точка)
+
+### 5. Производные свойства (Derived Properties)
+
+Эти свойства **НЕ хранятся** в Spline, а вычисляются:
 
 ```typescript
 // isDetached - вычисляется из parentId
-const isDetached = edge.parentId === null;
+const isDetached = spline.parentId === null;
 
 // isSource - первая вершина
-const isSource = (nodeId: NodeId) => edge.nodeIds[0] === nodeId;
+const isSource = (nodeId: NodeId) => spline.nodeIds[0] === nodeId;
 
 // isMouth - последняя вершина
 const isMouth = (nodeId: NodeId) =>
-  edge.nodeIds[edge.nodeIds.length - 1] === nodeId;
+  spline.nodeIds[spline.nodeIds.length - 1] === nodeId;
 
 // isJunction - есть дети
 const isJunction = (nodeId: NodeId) =>
-  edge.children.length > 0 && edge.nodeIds.includes(nodeId);
+  spline.children.length > 0 && spline.nodeIds.includes(nodeId);
 ```
 
 ---
@@ -164,42 +233,64 @@ const isJunction = (nodeId: NodeId) =>
 
 ### Core Layer (UE-Ready, Pure Functions)
 
-#### `src/core/graph/types.ts` (192 строки)
-**Назначение:** Определение всех типов данных Node-Edge модели
+#### `src/core/graph/types.ts`
+**Назначение:** Определение всех типов данных Node-Edge модели с 3-level hierarchy
 
 **Ключевые экспорты:**
-- `NodeId`, `EdgeId` - строковые UUID типы
-- `Node`, `Edge`, `RiverGraphV2` - основные интерфейсы
-- `Width`, `EdgeKind` - вспомогательные типы
+- `NodeId`, `SplineId` - строковые UUID типы
+- `Node`, `Spline`, `RiverGraphV2` - основные интерфейсы
+- `SplineKind` = `'river' | 'tributary' | 'stream'` - 3 уровня иерархии
+- `Width`, `NodeKind` - вспомогательные типы
 - `makeWidthPx()`, `makeWidthRelative()` - конструкторы Width
 - `isWidthRelative()` - type guard
 
-**V1-V7 инварианты задокументированы в JSDoc!**
+**I1-I5 инварианты задокументированы в JSDoc!**
 
-#### `src/core/graph/operations.ts` (715 строк)
+#### `src/core/graph/nodeKinds.ts`
+**Назначение:** Определение ролей узлов и топологии
+
+**Ключевые функции:**
+- `getNodeRoles(graph, nodeId)` → `NodeRoles` - **НОВОЕ!** Возвращает все роли узла
+  - `asSourceOf: SplineId[]` - списки сплайнов для каждой роли
+  - `asMouthOf: SplineId[]`
+  - `asInnerOf: SplineId[]`
+  - `isJunction: boolean`
+  - `primary: NodeKind` - приоритизированная роль
+- `computeNodeKind(graph, nodeId)` → `NodeKind` - использует getNodeRoles(), возвращает primary
+- `canDeleteNode(graph, nodeId)` - проверка возможности удаления
+- `findSplinesContainingNode(graph, nodeId)` - поиск всех сплайнов содержащих узел
+
+#### `src/core/graph/operations.ts`
 **Назначение:** Все операции на графе (pure functions, immutable)
 
 **Ключевые функции:**
 - `addNode(graph, x, y)` → `{ graph, nodeId }`
-- `deleteNode(graph, nodeId)` → `graph`
+- `deleteNode(graph, nodeId)` → `graph` - **ОБНОВЛЕНО:** поддерживает отсоединение stream
 - `moveNode(graph, nodeId, x, y)` → `graph`
-- `createEdge(graph, kind, nodeIds, width)` → `{ graph, edgeId }`
-- `attachTributary(graph, childEdgeId, parentEdgeId, junctionNodeId)` → `graph`
-  - **Валидирует V2-V7!**
-- `detachTributary(graph, tribEdgeId)` → `graph`
-- `reverseEdge(graph, edgeId)` → `graph` - разворачивает nodeIds
-- `extendUpstream(graph, edgeId, x, y)` → `{ graph, nodeId }` - prepend к source
-- `extendDownstream(graph, edgeId, x, y)` → `{ graph, nodeId }` - append к mouth
-- `insertBetween(graph, edgeId, afterIndex, x, y)` → `{ graph, nodeId }`
+- `createSpline(graph, kind, nodeIds, width)` → `{ graph, splineId }`
+- `attachTributary(graph, childSplineId, parentSplineId, junctionNodeId)` → `graph`
+  - **Валидирует I1-I5!**
+- `detachTributary(graph, tribSplineId)` → `graph` - **ОБНОВЛЕНО:** поддерживает stream
+- `reverseSpline(graph, splineId)` → `graph` - разворачивает nodeIds
+- `extendUpstream(graph, splineId, x, y)` → `{ graph, nodeId }` - prepend к source
+- `extendDownstream(graph, splineId, x, y)` → `{ graph, nodeId }` - append к mouth
+- `insertNodeAfter(graph, splineId, afterIndex, x, y)` → `{ graph, nodeId }`
+- `refreshAllSplineKinds(graph)` → `void` - **НОВОЕ!** Автоматически обновляет kind всех сплайнов
+  - Вызывается после: deleteNode, detachTributary, mergeSplines
+  - Использует determineSplineKind() для каждого сплайна
+- `determineSplineKind(graph, splineId)` → `SplineKind` - **НОВОЕ!** Вычисляет корректный kind
 
 **Важно:** Все функции возвращают новый граф (immutable pattern).
 
-#### `src/core/graph/validation.ts` (150 строк)
+#### `src/core/graph/validation.ts`
 **Назначение:** Валидация графа и правил присоединения
 
 **Ключевые функции:**
-- `isValidGraph(graph)` - проверка инвариантов
-- `canAttachToNode(graph, nodeId)` - можно ли создать приток от узла
+- `assertNetworkValid(graph)` - проверка I1-I5 инвариантов
+- `canAttachToNode(graph, nodeId)` - **ОБНОВЛЕНО:** проверяет depth ≤ 2
+  - Проверяет level родительского сплайна
+  - Level 2 (stream) НЕ может иметь детей (нарушило бы I5)
+  - Запрещает присоединение к истоку (source)
 - `isJunctionNode(graph, nodeId)` - узел с детьми
 - `findJunctionNodes(graph)` - поиск всех junction узлов
 
@@ -252,12 +343,12 @@ buildEdgeCache(graph: RiverGraphV2): Record<EdgeId, CurveCache>
 
 ### Hooks Layer
 
-#### `src/hooks/useRiverGraphV2.ts` (280 строк)
+#### `src/hooks/useRiverGraphV2.ts`
 **Назначение:** React hook для управления состоянием графа
 
 **State:**
 - `riverGraph: RiverGraphV2`
-- `activeEdgeId: EdgeId | null`
+- `activeSplineId: SplineId | null`
 - `selectedNodeId: NodeId | null`
 
 **Ключевая логика:**
@@ -266,31 +357,53 @@ buildEdgeCache(graph: RiverGraphV2): Record<EdgeId, CurveCache>
 - Extend upstream/downstream от концов
 - Insert между вершинами
 - Создание tributaries от junction nodes
+- **НОВОЕ:** Comprehensive auto-deletion logging
+- **ИСПРАВЛЕНО:** Attached children logic (`parentId !== null` вместо `kind === 'tributary'`)
 
-**Критический код (src/hooks/useRiverGraphV2.ts:64-153):**
+**Критические изменения:**
+
+1. **Fixed attached children logic:**
 ```typescript
-// Определяем тип вершины
-const selectedIndex = mainEdge.nodeIds.indexOf(selectedNodeId);
-const isSource = selectedIndex === 0;
-const isMouth = selectedIndex === mainEdge.nodeIds.length - 1;
+// Было: const isAttachedChild = activeSpline.kind === 'tributary';
+// Стало:
+const isAttachedChild = activeSpline.parentId !== null;
+// Теперь работает для tributary И stream!
+```
 
-// Source: extend upstream (prepend)
-if (isSource) {
-  const result = GraphService.extendUpstream(riverGraph, mainEdge.id, x, y);
-  // Новая вершина становится истоком!
-}
+2. **Comprehensive auto-deletion logging:**
+```typescript
+const deleteNode = useCallback((nodeId: NodeId) => {
+  const beforeSplineIds = new Set(Object.keys(riverGraph.splines));
+  const beforeNodeIds = new Set(Object.keys(riverGraph.nodes));
 
-// Mouth: extend downstream (append) OR create tributary
-if (isMouth) {
-  if (canAttachTributary) {
-    // Создаем приток от устья
-  } else {
-    const result = GraphService.extendDownstream(riverGraph, mainEdge.id, x, y);
-    // Новая вершина становится устьем!
+  let newGraph = GraphService.deleteNode(riverGraph, nodeId);
+
+  const afterSplineIds = new Set(Object.keys(newGraph.splines));
+  const afterNodeIds = new Set(Object.keys(newGraph.nodes));
+
+  // Log all auto-deleted splines and nodes
+  deletedSplines.forEach(splineId => {
+    actionLogger.log('DELETE_SPLINE', `Spline ${splineId.slice(0, 8)}... auto-deleted`, ...);
+  });
+
+  deletedNodes.forEach(nodeId => {
+    actionLogger.log('DELETE_NODE', `Node ${nodeId.slice(0, 8)}... auto-deleted`, ...);
+  });
+}, [riverGraph]);
+```
+
+3. **Tributary new_branch от inner nodes:**
+```typescript
+if (isAttachedChild) {
+  // ... source/mouth logic
+
+  // Mid-node (inner): check if can create new branch
+  const canAttach = GraphService.canAttachToNode(riverGraph, selectedNodeId);
+  if (canAttach.valid) {
+    // Create new branch (tributary → stream, stream → blocked)
+    const result = GraphService.createTributaryFromJunction(...);
   }
 }
-
-// Mid-node: create tributary OR insert
 ```
 
 #### `src/hooks/useRiverRendererV2.ts` (200 строк)
@@ -582,6 +695,15 @@ interface ActionLogPanelProps {
 
 ## 🚨 Известные проблемы и ограничения
 
+### ✅ Исправлено в текущей сессии (2025-11-16)
+1. ✅ **Stream behavior** - Stream больше не ведет себя как независимая река
+2. ✅ **Stream detachment** - Stream корректно отсоединяется при удалении junction
+3. ✅ **Auto-refresh kind** - Kind автоматически обновляется после топологических изменений
+4. ✅ **Multiple roles** - getNodeRoles() решает проблему узлов с несколькими ролями
+5. ✅ **Auto-deletion logging** - Все cascade deletions логируются
+6. ✅ **Tributary new_branch** - Inner nodes притоков могут создавать streams
+7. ✅ **Grid density** - 60x36 для более точного редактирования
+
 ### Критические (блокируют работу)
 - Нет критических проблем
 
@@ -589,12 +711,12 @@ interface ActionLogPanelProps {
 1. **Multi-river support отсутствует** 🚧
    - Кнопка "New River" пока только очищает граф
    - Нужно: поддержка нескольких независимых рек в одном RiverGraphV2
-   - Возможное решение: `rivers: EdgeId[]` вместо `mainEdgeId: EdgeId | null`
+   - Возможное решение: `rivers: SplineId[]` вместо `mainSplineId`
 
 2. **Tributary creation требует тестирования** 🚧
    - Логика реализована в useRiverGraphV2.ts
    - Требует тщательного тестирования с новой attachTributary
-   - V2-V7 валидации должны работать
+   - I1-I5 валидации должны работать
 
 3. **Pointer capture не реализован** (P0 bugfix pending)
    - Drag может терять фокус в некоторых браузерах
@@ -614,7 +736,34 @@ interface ActionLogPanelProps {
 
 ## 🎯 Приоритетные задачи для следующей сессии
 
-### 1. Multi-river Support (HIGH PRIORITY)
+**ВАЖНО:** Перед началом работы:
+1. Прочитайте ARCHITECTURE.md - новые инварианты I1-I5, Multiple Roles Problem
+2. Прочитайте раздел "История изменений" в ROADMAP.md
+3. Изучите getNodeRoles() и refreshAllSplineKinds()
+4. Протестируйте 3-level hierarchy: создайте River → Tributary → Stream
+
+### 1. Тестирование 3-Level Hierarchy (HIGH PRIORITY)
+**Файлы:** `src/core/graph/validation.ts`, `src/hooks/useRiverGraphV2.ts`
+
+**Задача:**
+- Протестировать создание River → Tributary → Stream
+- Убедиться что Stream НЕ может иметь детей (I5 инвариант)
+- Проверить что canAttachToNode блокирует attachment к stream
+- Проверить что refreshAllSplineKinds корректно обновляет kind
+- Проверить что getNodeRoles возвращает правильные роли для узлов
+
+**Тестовые сценарии:**
+1. Создать River с 3 nodes
+2. Создать Tributary от junction River (mid-node)
+3. Создать Stream от junction Tributary (mid-node)
+4. Попытаться создать приток от Stream (должно заблокироваться)
+5. Удалить junction и проверить что Stream отсоединяется
+6. Проверить логи auto-deletion
+
+**Сложность:** Medium
+**Время:** 2-3 часа
+
+### 2. Multi-river Support (HIGH PRIORITY)
 **Файлы:** `src/core/graph/types.ts`, `src/hooks/useRiverGraphV2.ts`, `src/components/RiverEditorDemo.tsx`
 
 **Задача:**

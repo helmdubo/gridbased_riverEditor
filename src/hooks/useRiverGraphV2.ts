@@ -339,12 +339,12 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
           console.log('🌿 Editing attached child spline (tributary or stream)');
 
           if (isSource || selectedIndex === -1) {
-            console.log('⬆️ Extending tributary upstream (away from junction)');
+            console.log('⬆️ Extending child upstream (away from junction)');
             const result = GraphService.extendUpstream(riverGraph, resolvedActiveId, x, y);
 
             actionLogger.log(
               'EXTEND_UPSTREAM',
-              `Extend tributary ${resolvedActiveId.slice(0, 8)}... upstream to (${Math.round(x)}, ${Math.round(y)})`,
+              `Extend ${activeSpline.kind} ${resolvedActiveId.slice(0, 8)}... upstream to (${Math.round(x)}, ${Math.round(y)})`,
               riverGraph,
               result.graph,
               {
@@ -364,7 +364,85 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
             return;
           }
 
-          console.log('🚫 Attached children (tributaries/streams) can only grow from their source');
+          // Check if mouth - cannot extend downstream or create branches
+          if (isMouth) {
+            console.log('🚫 Cannot extend downstream from mouth of attached child (mouth is junction)');
+            return;
+          }
+
+          // Mid-node (inner): check if can create new branch
+          const canAttach = GraphService.canAttachToNode(riverGraph, selectedNodeId);
+          const isJunction = GraphService.isJunctionNode(riverGraph, selectedNodeId);
+          console.log('🔍 Selected node state (attached child):', { canAttach: canAttach.valid, isJunction, kind: activeSpline.kind });
+
+          if (canAttach.valid) {
+            // Create new branch from this mid-node (will become junction)
+            // For tributary -> creates stream (level 2)
+            // For stream -> blocked by canAttachToNode (would be level 3)
+            console.log('🌿 Creating new branch from mid-node of', activeSpline.kind);
+            const result = GraphService.createTributaryFromJunction(
+              riverGraph,
+              resolvedActiveId,
+              selectedNodeId,
+              x,
+              y,
+              tributaryWidthPercent
+            );
+
+            actionLogger.log(
+              'ATTACH_TRIBUTARY',
+              `Create ${activeSpline.kind === 'tributary' ? 'stream' : 'branch'} from ${activeSpline.kind} ${resolvedActiveId.slice(0, 8)}... at junction ${selectedNodeId.slice(0, 8)}...`,
+              riverGraph,
+              result.graph,
+              { x, y, parentKind: activeSpline.kind, junctionNodeId: selectedNodeId, tributaryId: result.tributaryId, newNodeId: result.newNodeId, widthPercent: tributaryWidthPercent, selectedNode: getSelectedNodeContext() }
+            );
+
+            setRiverGraph(result.graph);
+            setActiveSplineId(result.tributaryId);
+            setSelectedNodeId(result.newNodeId);
+            return;
+          }
+
+          // If node is already a junction, don't allow inserting new points
+          if (isJunction) {
+            console.log('🚫 Cannot insert after junction node - junction already has child');
+            return;
+          }
+
+          // Otherwise, try to insert node after selected node
+          try {
+            console.log('📌 Inserting node after selected mid-node in', activeSpline.kind);
+            const result = GraphService.insertNodeAfter(
+              riverGraph,
+              resolvedActiveId,
+              selectedNodeId,
+              x,
+              y
+            );
+            console.log('✅ Node inserted:', result.nodeId);
+
+            actionLogger.log(
+              'INSERT_NODE',
+              `Insert node after ${selectedNodeId.slice(0, 8)}... in ${activeSpline.kind} at (${Math.round(x)}, ${Math.round(y)})`,
+              riverGraph,
+              result.graph,
+              { x, y, afterNodeId: selectedNodeId, nodeId: result.nodeId, splineId: resolvedActiveId, kind: activeSpline.kind, selectedNode: getSelectedNodeContext() }
+            );
+
+            setRiverGraph(result.graph);
+            setSelectedNodeId(result.nodeId);
+          } catch (e) {
+            console.log('⚠️ Insert failed:', e);
+            actionLogger.log(
+              'INSERT_NODE',
+              `Insert node failed in ${activeSpline.kind}`,
+              riverGraph,
+              riverGraph,
+              { x, y, afterNodeId: selectedNodeId, splineId: resolvedActiveId, kind: activeSpline.kind, selectedNode: getSelectedNodeContext() },
+              String(e)
+            );
+          }
+
           return;
         }
 
