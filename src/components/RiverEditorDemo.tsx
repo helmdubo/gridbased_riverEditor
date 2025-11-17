@@ -39,6 +39,11 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
   const [hoveredPointId, setHoveredPointId] = useState<string | null>(null);
   const [hoveredTributaryId, setHoveredTributaryId] = useState<string | null>(null);
   const [hoveredTributaryPointId, setHoveredTributaryPointId] = useState<string | null>(null);
+  const clearHoverState = useCallback(() => {
+    setHoveredPointId(null);
+    setHoveredTributaryId(null);
+    setHoveredTributaryPointId(null);
+  }, []);
   const [draggingPointId, setDraggingPointId] = useState<NodeId | null>(null);
   const [draggingTributaryInfo, setDraggingTributaryInfo] = useState<{ id: string; pointId: string; isMouth: boolean } | null>(null);
   const overlayRef = useRef<SVGSVGElement>(null);
@@ -448,7 +453,8 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
     setDraggingPointId(nodeId);
     selectNode(nodeId);
     setActiveSpline(null);
-  }, [selectNode, setActiveSpline, logger, activeSplineId]);
+    clearHoverState();
+  }, [selectNode, setActiveSpline, logger, activeSplineId, clearHoverState]);
 
   const handlePointClick = useCallback((e: React.MouseEvent, pointId: string) => {
     e.stopPropagation();
@@ -484,8 +490,12 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    // Update hover state when not dragging
-    if (!isDragging) {
+    // Update hover state when not dragging; clear it when dragging
+    if (isDragging) {
+      if (hoveredPointId || hoveredTributaryId || hoveredTributaryPointId) {
+        clearHoverState();
+      }
+    } else {
       let found = false;
 
       // Check main river points
@@ -514,9 +524,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
 
       // Clear hover if nothing found
       if (!found) {
-        setHoveredPointId(null);
-        setHoveredTributaryId(null);
-        setHoveredTributaryPointId(null);
+        clearHoverState();
       }
     }
 
@@ -674,6 +682,10 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
     geometryCache,
     mainRiverWidthPx,
     updateDragCache,
+    hoveredPointId,
+    hoveredTributaryId,
+    hoveredTributaryPointId,
+    clearHoverState,
   ]);
 
   const handleOverlayPointerUp = useCallback((_e: React.PointerEvent<SVGSVGElement>) => {
@@ -764,6 +776,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
   }, [draggingPointId, draggingTributaryInfo, snapTargetNode, riverGraph, mergeNodes, mergeSplines, attachSplineAsTributary, actionLogger, dragTempPosition, moveNode, selectedNodeId]);
 
   const handleOverlayMouseLeave = useCallback(() => {
+    clearHoverState();
     if (draggingPointId || draggingTributaryInfo) {
       console.log('⚠️ Drag cancelled (mouse left canvas)');
 
@@ -787,7 +800,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         wasDraggingRef.current = false;
       }, 50);
     }
-  }, [draggingPointId, draggingTributaryInfo, clearDragCache]);
+  }, [draggingPointId, draggingTributaryInfo, clearDragCache, clearHoverState]);
 
   // Tributary interaction
   const handleTributaryPointMouseDown = useCallback((id: string, pointId: string, isMouth: boolean) => {
@@ -796,7 +809,8 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
     setDraggingTributaryInfo({ id, pointId, isMouth });
     selectNode(makeNodeId(pointId));
     setActiveSpline(id as SplineId);
-  }, [selectNode, setActiveSpline]);
+    clearHoverState();
+  }, [selectNode, setActiveSpline, clearHoverState]);
 
   const handleTributaryPointClick = useCallback((e: React.MouseEvent, id: string, pointId: string) => {
     e.stopPropagation();
@@ -1079,7 +1093,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
           hoveredPointId={hoveredPointId}
           hoveredTributaryId={hoveredTributaryId}
           hoveredTributaryPointId={hoveredTributaryPointId}
-          snapTargetPointId={null}
+          snapTargetPointId={snapTargetNode ? snapTargetNode.nodeId : null}
           insertPointPreview={null}
           onPointerMove={handleOverlayPointerMove}
           onPointerUp={handleOverlayPointerUp}
