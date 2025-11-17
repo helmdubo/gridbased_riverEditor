@@ -237,7 +237,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
   };
 
   // Renderer with geometry cache + P0 bugfixes
-  const { canvasRef, geometryCache, render, computeFlowField } = useRiverRendererV2(
+  const { canvasRef, geometryCache, render, computeFlowField, updateDragCache, clearDragCache } = useRiverRendererV2(
     riverGraph,
     mainRiverWidthPx,
     cols,
@@ -522,12 +522,15 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
 
     // OPTIMIZATION: Handle dragging with batching (no graph update until mouseup)
     // Store temporary position instead of calling moveNode every pixel
+    // ALSO update geometry cache incrementally for real-time visual feedback
     if (draggingPointId) {
       wasDraggingRef.current = true; // Mark that we're dragging
       const newX = Math.max(0, Math.min(cols * effectiveGridSize, x));
       const newY = Math.max(0, Math.min(rows * effectiveGridSize, y));
       // DON'T call moveNode here - just store temp position
       setDragTempPosition({ nodeId: draggingPointId, x: newX, y: newY });
+      // OPTIMIZATION: Update geometry cache incrementally (only affected edges)
+      updateDragCache(draggingPointId, newX, newY);
     }
 
     // Handle dragging tributary point
@@ -538,6 +541,8 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
       const nodeId = makeNodeId(draggingTributaryInfo.pointId);
       // DON'T call moveNode here - just store temp position
       setDragTempPosition({ nodeId, x: newX, y: newY });
+      // OPTIMIZATION: Update geometry cache incrementally (only affected edges)
+      updateDragCache(nodeId, newX, newY);
     }
 
     // Check for snapping ONLY when dragging (to show target highlights)
@@ -668,6 +673,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
     riverGraph,
     geometryCache,
     mainRiverWidthPx,
+    updateDragCache,
   ]);
 
   const handleOverlayPointerUp = useCallback((_e: React.PointerEvent<SVGSVGElement>) => {
@@ -680,6 +686,9 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         moveNode(dragTempPosition.nodeId as NodeId, dragTempPosition.x, dragTempPosition.y);
         setDragTempPosition(null);
       }
+
+      // OPTIMIZATION: Clear drag cache (full rebuild will happen via useEffect)
+      clearDragCache();
 
       // Check if we should perform an operation
       const actualDraggedId = draggingPointId || (draggingTributaryInfo ? makeNodeId(draggingTributaryInfo.pointId) : null);
@@ -752,7 +761,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         wasDraggingRef.current = false;
       }, 50);
     }
-  }, [draggingPointId, draggingTributaryInfo, snapTargetNode, riverGraph, mergeNodes, mergeSplines, attachSplineAsTributary, actionLogger, dragTempPosition, moveNode]);
+  }, [draggingPointId, draggingTributaryInfo, snapTargetNode, riverGraph, mergeNodes, mergeSplines, attachSplineAsTributary, actionLogger, dragTempPosition, moveNode, clearDragCache, selectedNodeId]);
 
   const handleOverlayMouseLeave = useCallback(() => {
     if (draggingPointId || draggingTributaryInfo) {
@@ -765,6 +774,9 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
       // Clear drag temp position (batching)
       setDragTempPosition(null);
 
+      // OPTIMIZATION: Clear drag cache
+      clearDragCache();
+
       setDraggingPointId(null);
       setDraggingTributaryInfo(null);
 
@@ -773,7 +785,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         wasDraggingRef.current = false;
       }, 50);
     }
-  }, [draggingPointId, draggingTributaryInfo]);
+  }, [draggingPointId, draggingTributaryInfo, clearDragCache]);
 
   // Tributary interaction
   const handleTributaryPointMouseDown = useCallback((id: string, pointId: string, isMouth: boolean) => {

@@ -210,3 +210,68 @@ export function invalidateEdges(cache: GraphCache, splineIds: SplineId[]): Graph
 export function clearCache(): GraphCache {
   return {};
 }
+
+/**
+ * Updates cache for a node move (incremental update during drag)
+ *
+ * This is an optimization for drag operations. Instead of rebuilding
+ * the entire cache, we only update splines that contain the moved node.
+ *
+ * @param cache - Current geometry cache
+ * @param graph - River graph (with old node positions)
+ * @param nodeId - Node being moved
+ * @param newX - New X position
+ * @param newY - New Y position
+ * @param segments - Number of samples per control segment (optional)
+ * @returns Updated cache with only affected splines rebuilt
+ *
+ * @performance
+ * - Only rebuilds affected splines (typically 1-2)
+ * - Leaves untouched splines as-is (no recomputation)
+ * - Perfect for real-time drag feedback
+ */
+export function updateCacheForNodeMove(
+  cache: GraphCache,
+  graph: RiverGraphV2,
+  nodeId: string,
+  newX: number,
+  newY: number,
+  segments?: number
+): GraphCache {
+  // Find all splines that contain this node
+  const affectedSplineIds: string[] = [];
+  for (const [splineId, spline] of Object.entries(graph.splines)) {
+    if (spline.nodeIds.includes(nodeId)) {
+      affectedSplineIds.push(splineId);
+    }
+  }
+
+  if (affectedSplineIds.length === 0) {
+    return cache; // No changes needed
+  }
+
+  // Clone cache (shallow copy is enough - we replace affected entries entirely)
+  const newCache = { ...cache };
+
+  // Rebuild cache only for affected splines
+  for (const splineId of affectedSplineIds) {
+    const spline = graph.splines[splineId];
+    if (!spline) continue;
+
+    // Build control points with updated position for the moved node
+    const controlPoints: Point[] = spline.nodeIds.map((nid) => {
+      if (nid === nodeId) {
+        return { x: newX, y: newY };
+      }
+      const node = graph.nodes[nid];
+      return node ? { x: node.x, y: node.y } : { x: 0, y: 0 };
+    });
+
+    if (controlPoints.length < 2) continue;
+
+    // Rebuild cache for this spline only
+    newCache[splineId] = buildEdgeCache(controlPoints, spline.nodeIds, segments);
+  }
+
+  return newCache;
+}

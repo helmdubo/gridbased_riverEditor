@@ -222,10 +222,9 @@ export class RenderServiceV2 {
           ((caseIndex >> 0) & 1) + ((caseIndex >> 1) & 1) + ((caseIndex >> 2) & 1) + ((caseIndex >> 3) & 1);
         const waterBits = 4 - landBits;
 
-        // Map small cell to middle cell for flow field check
-        const middleCol = Math.floor(smallCol / SMALL_CELLS_PER_MIDDLE);
-        const middleRow = Math.floor(smallRow / SMALL_CELLS_PER_MIDDLE);
-        const isWaterCell = flowField ? flowField.waterMask[middleRow][middleCol] : false;
+        // OPTIMIZATION: FlowField now uses small cell grid (16px) directly
+        // Check if this small cell is water
+        const isWaterCell = flowField ? flowField.waterMask[smallRow][smallCol] : false;
 
         let fillColor = 'transparent';
 
@@ -244,14 +243,14 @@ export class RenderServiceV2 {
       }
     }
 
-    // Draw flow map (uses middle cell grid)
+    // Draw flow map (OPTIMIZATION: now uses small cell grid 16px)
     if (options.showFlowMap && flowField) {
-      this.renderFlowMap(ctx, flowField, gridSize);
+      this.renderFlowMap(ctx, flowField, SMALL_CELL_SIZE);
     }
 
-    // Draw flow arrows (uses middle cell grid)
+    // Draw flow arrows (OPTIMIZATION: now uses small cell grid 16px)
     if (options.showFlowArrows && flowField) {
-      this.renderFlowArrows(ctx, flowField, gridSize, options);
+      this.renderFlowArrows(ctx, flowField, SMALL_CELL_SIZE, options);
     }
 
     // Draw grid lines and contours (middle cell visual grid + small cell contours)
