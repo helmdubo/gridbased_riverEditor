@@ -445,6 +445,12 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
       activeSplineId,
     });
 
+    // BUGFIX: Clear hover state when starting drag
+    // This prevents hover highlight from appearing at the old position
+    setHoveredPointId(null);
+    setHoveredTributaryId(null);
+    setHoveredTributaryPointId(null);
+
     setDraggingPointId(nodeId);
     selectNode(nodeId);
     setActiveSpline(null);
@@ -573,6 +579,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
             if (dist < SNAP_DISTANCE) {
               // Check if merge is allowed
               if (canMergeNodes(riverGraph, actualDraggedId, nodeId)) {
+                console.log('🎯 Snap target found (same-spline merge):', nodeId.slice(0, 8));
                 setSnapTargetNode({
                   nodeId,
                   node,
@@ -793,6 +800,13 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
   const handleTributaryPointMouseDown = useCallback((id: string, pointId: string, isMouth: boolean) => {
     console.log('🖱️ Tributary point mouse down:', { id, pointId, isMouth });
     wasDraggingRef.current = false; // Reset flag when starting new interaction
+
+    // BUGFIX: Clear hover state when starting drag
+    // This prevents hover highlight from appearing at the old position
+    setHoveredPointId(null);
+    setHoveredTributaryId(null);
+    setHoveredTributaryPointId(null);
+
     setDraggingTributaryInfo({ id, pointId, isMouth });
     selectNode(makeNodeId(pointId));
     setActiveSpline(id as SplineId);

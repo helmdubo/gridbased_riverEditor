@@ -59,6 +59,11 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
   onTributaryPointClick,
   onTributaryPointDoubleClick,
 }) => {
+  // DEBUG: Log snap target changes
+  if (snapTargetPointId) {
+    console.log('🎯 RiverOverlay received snapTargetPointId:', snapTargetPointId.slice(0, 8));
+  }
+
   return (
     <svg
       ref={overlayRef}
