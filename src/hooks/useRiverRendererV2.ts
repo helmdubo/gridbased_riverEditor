@@ -72,6 +72,10 @@ export const useRiverRendererV2 = (
   useEffect(() => {
     const newCache = buildGraphCache(riverGraph);
     setGeometryCache(newCache);
+    // BUGFIX: Clear drag cache after geometry cache is rebuilt
+    // This prevents "jitter" when releasing dragged node - dragCache is cleared
+    // only after the full geometryCache is ready, avoiding momentary render with stale cache
+    setDragCache(null);
   }, [riverGraph]);
 
   // OPTIMIZATION: Update drag cache for a single node move (incremental)
