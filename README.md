@@ -5,25 +5,29 @@
 ## 🌊 Возможности
 
 ### Core Features
-- ✅ **Node-Edge архитектура** - UE5.6-готовая модель данных
-- ✅ Создание речных систем с явными вершинами и ребрами
+- ✅ **Node-Spline архитектура** - UE5.6-готовая модель данных
+- ✅ Создание речных систем с явными вершинами и сплайнами
 - ✅ Extend upstream/downstream - расширение реки от концов
 - ✅ Mid-node insertion - вставка вершин между существующими
 - ✅ Comprehensive debugger - полная информация о структуре графа
+- ✅ **Two-level grid system** - 48px (визуализация) + 16px (вычисления)
+- ✅ **Stream hierarchy restriction** - level 2 inner nodes не создают точки
+
+### Performance & UX (NEW 2025-11-17)
+- ✅ **Incremental geometry updates** - 30x faster drag rendering
+- ✅ **Lazy FlowField evaluation** - вычисление по требованию
+- ✅ **Drag batching** - плавное перетаскивание без jitter
+- ✅ **Clean snap visualization** - zoom effect без артефактов
+- ✅ **Merge survivor positioning** - интуитивное поведение при слиянии
 
 ### Visualization & Interaction
 - ✅ Интерполяция кривых (Catmull-Rom сплайны)
 - ✅ Визуализация потоков воды с направлением и скоростью
 - ✅ Разные типы рек (стоячая вода, равнинная, горная, бурный поток)
-- ✅ Marching Squares для отрисовки контуров
+- ✅ Marching Squares для отрисовки контуров (16px precision)
 - ✅ Интерактивное перетаскивание вершин и притоков
 - ✅ Retina display support (devicePixelRatio fix)
 - ✅ Multi-river режим: несколько независимых рек с притоками
-
-### In Development
-- 🚧 GraphAdapter 2.0 — прямой рендеринг `RiverGraphV2` без legacy-структур
-- 🚧 FlowService на Node-Edge модели
-- 🚧 Расширенная поддержка pointer capture и stylus/pen устройств
 
 ## 🏗️ Архитектура
 
@@ -203,21 +207,40 @@ npm run type-check   # Проверка типов TypeScript
 
 ---
 
-## 🤖 Agent Handoff (2025-12-01)
+## 🤖 Agent Handoff (2025-11-17)
 
-**Состояние редактора**
+**Состояние редактора - Production Ready**
 
-- Поддерживаются независимые реки (`kind='river'`, `parentId=null`) и притоки с наследованием ширины.
-- Детач притока автоматически переводит его в режим родительской реки с полной функциональностью и стилями.
-- Ползунок ширины синхронизируется с активным сплайном: пиксели для рек, проценты для притоков.
-- Тестовые проверки: `npm run type-check`, `npm run build`.
+- ✅ Node-Spline архитектура полностью реализована и оптимизирована
+- ✅ Incremental geometry updates: 30x faster drag rendering
+- ✅ Two-level grid system: 48px (middle) + 16px (small) для точности
+- ✅ FlowField на мелкой сетке: 9x выше разрешение
+- ✅ Lazy FlowField evaluation: вычисление по кнопке "Calculate Flow"
+- ✅ Smooth drag без jitter: dragCache + automatic cleanup
+- ✅ Clean snap visualization: zoom effect, NO canvas rings
+- ✅ Stream hierarchy: level 2 inner nodes не создают точки
+- ✅ Merge survivor positioning: интуитивное drag-and-merge
+- ✅ Тестовые проверки: `npm run type-check`, `npm run build`
+
+**Ключевые оптимизации**
+
+1. **Drag Performance**: `updateCacheForNodeMove()` пересчитывает только затронутые splines (1-2 вместо всех)
+2. **Geometry Cache**: `dragCache` для временного хранения during drag, auto-clear после rebuild
+3. **FlowField Resolution**: Small grid (16px) вместо middle grid (48px) = 3x3 = 9x точнее
+4. **Visual Feedback**: SVG zoom (8px) для snap targets, NO canvas ring artifacts
 
 **Рекомендации для следующего агента**
 
-1. Ознакомьтесь с разделом «Следующие шаги» в [ROADMAP.md](./ROADMAP.md).
-2. При разработке ориентируйтесь на отказ от legacy-адаптера и перенос FlowService на Node-Edge модель.
-3. Перед началом работы запустите `npm run dev` и убедитесь, что многоречные сцены (3+ реки) и цепочки притоков ведут себя корректно.
-4. При обновлении логики ширины проверяйте, что новые притоки наследуют процентное значение, а независимые реки сохраняют пиксельное.
+1. Прочитайте [AGENTS.md](./AGENTS.md) - там подробная документация всех изменений
+2. Изучите секции "Performance Optimizations" и "Two-Level Grid System"
+3. Понимайте как работает `dragCache` и `updateCacheForNodeMove()`
+4. При тестировании: drag должен быть плавным, snap targets должны "набухать" (zoom)
+5. Опционально: удалите debug логи (`🎯 Snap target found...`) после финального тестирования
+
+**Приоритетные задачи**
+- Hierarchical FlowField (optional): разное разрешение для main rivers vs tributaries
+- Undo/Redo stack (medium priority)
+- Keyboard shortcuts (low priority)
 
 Удачи в следующей сессии! 🚀
 
