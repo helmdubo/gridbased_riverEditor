@@ -45,6 +45,10 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
   const [capturedPointerId, setCapturedPointerId] = useState<number | null>(null);
   const wasDraggingRef = useRef(false); // Track if we were dragging to prevent click after drag
 
+  // OPTIMIZATION: Temporary position during drag (batching)
+  // Only update graph on mouseup, not every pixel
+  const [dragTempPosition, setDragTempPosition] = useState<{ nodeId: string; x: number; y: number } | null>(null);
+
   // Snapping state
   const [snapTargetNode, setSnapTargetNode] = useState<SnapTargetNode | null>(null);
   const [splineSnapInfo, setSplineSnapInfo] = useState<SplineSnapResult | null>(null);
@@ -233,7 +237,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
   };
 
   // Renderer with geometry cache + P0 bugfixes
-  const { canvasRef, geometryCache, render } = useRiverRendererV2(
+  const { canvasRef, geometryCache, render, computeFlowField, updateDragCache, clearDragCache } = useRiverRendererV2(
     riverGraph,
     mainRiverWidthPx,
     cols,
@@ -272,7 +276,10 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
       for (const nodeId of primarySpline.nodeIds) {
         const node = riverGraph.nodes[nodeId];
         if (node) {
-          mainRiver.push({ x: node.x, y: node.y, id: node.id });
+          // OPTIMIZATION: Use temp position during drag for smooth visual feedback
+          const x = (dragTempPosition && dragTempPosition.nodeId === nodeId) ? dragTempPosition.x : node.x;
+          const y = (dragTempPosition && dragTempPosition.nodeId === nodeId) ? dragTempPosition.y : node.y;
+          mainRiver.push({ x, y, id: node.id });
         }
       }
     }
@@ -284,7 +291,10 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
       for (const nodeId of spline.nodeIds) {
         const node = riverGraph.nodes[nodeId];
         if (node) {
-          points.push({ x: node.x, y: node.y, id: node.id });
+          // OPTIMIZATION: Use temp position during drag for smooth visual feedback
+          const x = (dragTempPosition && dragTempPosition.nodeId === nodeId) ? dragTempPosition.x : node.x;
+          const y = (dragTempPosition && dragTempPosition.nodeId === nodeId) ? dragTempPosition.y : node.y;
+          points.push({ x, y, id: node.id });
         }
       }
 
@@ -311,7 +321,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
     }
 
     return { mainRiver, tributaries };
-  }, [riverGraph, computeWidthPx, mainSpline]);
+  }, [riverGraph, computeWidthPx, mainSpline, dragTempPosition]);
 
   const overlayActiveSplineId = mainSpline && (!activeSplineId || activeSplineId === mainSpline.id)
     ? 'main'
@@ -510,12 +520,17 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
       }
     }
 
-    // Handle dragging main river point
+    // OPTIMIZATION: Handle dragging with batching (no graph update until mouseup)
+    // Store temporary position instead of calling moveNode every pixel
+    // ALSO update geometry cache incrementally for real-time visual feedback
     if (draggingPointId) {
       wasDraggingRef.current = true; // Mark that we're dragging
       const newX = Math.max(0, Math.min(cols * effectiveGridSize, x));
       const newY = Math.max(0, Math.min(rows * effectiveGridSize, y));
-      moveNode(draggingPointId, newX, newY);
+      // DON'T call moveNode here - just store temp position
+      setDragTempPosition({ nodeId: draggingPointId, x: newX, y: newY });
+      // OPTIMIZATION: Update geometry cache incrementally (only affected edges)
+      updateDragCache(draggingPointId, newX, newY);
     }
 
     // Handle dragging tributary point
@@ -523,7 +538,11 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
       wasDraggingRef.current = true; // Mark that we're dragging
       const newX = Math.max(0, Math.min(cols * effectiveGridSize, x));
       const newY = Math.max(0, Math.min(rows * effectiveGridSize, y));
-      moveNode(makeNodeId(draggingTributaryInfo.pointId), newX, newY);
+      const nodeId = makeNodeId(draggingTributaryInfo.pointId);
+      // DON'T call moveNode here - just store temp position
+      setDragTempPosition({ nodeId, x: newX, y: newY });
+      // OPTIMIZATION: Update geometry cache incrementally (only affected edges)
+      updateDragCache(nodeId, newX, newY);
     }
 
     // Check for snapping ONLY when dragging (to show target highlights)
@@ -654,11 +673,22 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
     riverGraph,
     geometryCache,
     mainRiverWidthPx,
+    updateDragCache,
   ]);
 
   const handleOverlayPointerUp = useCallback((_e: React.PointerEvent<SVGSVGElement>) => {
     if (draggingPointId || draggingTributaryInfo) {
       console.log('✅ Drag complete');
+
+      // OPTIMIZATION: Apply final position from dragTempPosition (batching)
+      // This is the ONLY place where we call moveNode during drag
+      if (dragTempPosition) {
+        moveNode(dragTempPosition.nodeId as NodeId, dragTempPosition.x, dragTempPosition.y);
+        setDragTempPosition(null);
+      }
+
+      // OPTIMIZATION: Clear drag cache (full rebuild will happen via useEffect)
+      clearDragCache();
 
       // Check if we should perform an operation
       const actualDraggedId = draggingPointId || (draggingTributaryInfo ? makeNodeId(draggingTributaryInfo.pointId) : null);
@@ -731,7 +761,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         wasDraggingRef.current = false;
       }, 50);
     }
-  }, [draggingPointId, draggingTributaryInfo, snapTargetNode, riverGraph, mergeNodes, mergeSplines, attachSplineAsTributary, actionLogger]);
+  }, [draggingPointId, draggingTributaryInfo, snapTargetNode, riverGraph, mergeNodes, mergeSplines, attachSplineAsTributary, actionLogger, dragTempPosition, moveNode, clearDragCache, selectedNodeId]);
 
   const handleOverlayMouseLeave = useCallback(() => {
     if (draggingPointId || draggingTributaryInfo) {
@@ -741,6 +771,12 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
       setSnapTargetNode(null);
       setSplineSnapInfo(null);
 
+      // Clear drag temp position (batching)
+      setDragTempPosition(null);
+
+      // OPTIMIZATION: Clear drag cache
+      clearDragCache();
+
       setDraggingPointId(null);
       setDraggingTributaryInfo(null);
 
@@ -749,7 +785,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         wasDraggingRef.current = false;
       }, 50);
     }
-  }, [draggingPointId, draggingTributaryInfo]);
+  }, [draggingPointId, draggingTributaryInfo, clearDragCache]);
 
   // Tributary interaction
   const handleTributaryPointMouseDown = useCallback((id: string, pointId: string, isMouth: boolean) => {
@@ -867,6 +903,22 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
 
         {/* Right column: Checkboxes */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <button
+            onClick={() => computeFlowField(riverType)}
+            style={{
+              padding: '8px 12px',
+              fontSize: '14px',
+              fontWeight: 'bold',
+              color: 'white',
+              backgroundColor: '#3b82f6',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+            }}
+          >
+            🔄 Calculate Flow
+          </button>
+
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <input
               type="checkbox"

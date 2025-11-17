@@ -222,10 +222,9 @@ export class RenderServiceV2 {
           ((caseIndex >> 0) & 1) + ((caseIndex >> 1) & 1) + ((caseIndex >> 2) & 1) + ((caseIndex >> 3) & 1);
         const waterBits = 4 - landBits;
 
-        // Map small cell to middle cell for flow field check
-        const middleCol = Math.floor(smallCol / SMALL_CELLS_PER_MIDDLE);
-        const middleRow = Math.floor(smallRow / SMALL_CELLS_PER_MIDDLE);
-        const isWaterCell = flowField ? flowField.waterMask[middleRow][middleCol] : false;
+        // OPTIMIZATION: FlowField now uses small cell grid (16px) directly
+        // Check if this small cell is water
+        const isWaterCell = flowField ? flowField.waterMask[smallRow][smallCol] : false;
 
         let fillColor = 'transparent';
 
@@ -244,14 +243,14 @@ export class RenderServiceV2 {
       }
     }
 
-    // Draw flow map (uses middle cell grid)
+    // Draw flow map (OPTIMIZATION: now uses small cell grid 16px)
     if (options.showFlowMap && flowField) {
-      this.renderFlowMap(ctx, flowField, gridSize);
+      this.renderFlowMap(ctx, flowField, SMALL_CELL_SIZE);
     }
 
-    // Draw flow arrows (uses middle cell grid)
+    // Draw flow arrows (OPTIMIZATION: now uses small cell grid 16px)
     if (options.showFlowArrows && flowField) {
-      this.renderFlowArrows(ctx, flowField, gridSize, options);
+      this.renderFlowArrows(ctx, flowField, SMALL_CELL_SIZE, options);
     }
 
     // Draw grid lines and contours (middle cell visual grid + small cell contours)
@@ -357,9 +356,10 @@ export class RenderServiceV2 {
   /**
    * Render contours with marching squares
    *
-   * Draws two layers:
-   * 1. Visual grid lines using middle cells (48px) - shown to user
-   * 2. Precise contours using small cells (16px) - for accurate terrain boundaries
+   * Draws three layers (Layer 1 - Static):
+   * 1. Small grid lines using small cells (16px) - subtle guide
+   * 2. Visual grid lines using middle cells (48px) - main reference
+   * 3. Precise contours using small cells (16px) - terrain boundaries
    *
    * @param ctx - Canvas rendering context
    * @param middleCols - Number of middle cells horizontally
@@ -376,7 +376,18 @@ export class RenderServiceV2 {
     smallRows: number,
     allCurves: CurveData[]
   ): void {
-    // Draw visual grid lines (middle cells)
+    // Layer 1a: Draw small grid lines (16px) - subtle, less contrast
+    ctx.strokeStyle = COLORS.GRID_LINE_SMALL;
+    ctx.lineWidth = 0.5;
+    for (let row = 0; row < smallRows; row++) {
+      for (let col = 0; col < smallCols; col++) {
+        const x = col * SMALL_CELL_SIZE;
+        const y = row * SMALL_CELL_SIZE;
+        ctx.strokeRect(x, y, SMALL_CELL_SIZE, SMALL_CELL_SIZE);
+      }
+    }
+
+    // Layer 1b: Draw visual grid lines (48px middle cells) - main reference
     ctx.strokeStyle = COLORS.GRID_LINE;
     ctx.lineWidth = 1;
     for (let row = 0; row < middleRows; row++) {
@@ -389,7 +400,7 @@ export class RenderServiceV2 {
 
     if (allCurves.length === 0) return;
 
-    // Draw precise contours (small cells)
+    // Layer 1c: Draw precise contours (small cells)
     ctx.strokeStyle = COLORS.CONTOUR;
     ctx.lineWidth = 2.5;
     ctx.lineCap = 'round';

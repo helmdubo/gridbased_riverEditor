@@ -281,6 +281,29 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
             return;
           }
 
+          // IMPORTANT: For stream (level 2), only allow extension from endpoints (source/mouth)
+          // Inner points cannot create new points (neither tributary nor insert)
+          const splineWithNode = Object.values(riverGraph.splines).find(
+            s => s.nodeIds.includes(selectedNodeId as string)
+          );
+          if (splineWithNode) {
+            // Calculate hierarchy level
+            let currentSpline = splineWithNode;
+            let level = 0;
+            while (currentSpline.parentId !== null) {
+              level++;
+              const parent = riverGraph.splines[currentSpline.parentId];
+              if (!parent) break;
+              currentSpline = parent as Spline;
+            }
+
+            // Block inner point operations for stream (level 2)
+            if (level >= 2) {
+              console.log('🚫 Stream inner points cannot create new nodes - only extend from endpoints');
+              return;
+            }
+          }
+
           // Otherwise, insert node after selected node
           try {
             console.log('📌 Inserting node after selected mid-node');
@@ -408,6 +431,23 @@ export const useRiverGraphV2 = (initialGraph?: RiverGraphV2) => {
           // If node is already a junction, don't allow inserting new points
           if (isJunction) {
             console.log('🚫 Cannot insert after junction node - junction already has child');
+            return;
+          }
+
+          // IMPORTANT: For stream (level 2), only allow extension from endpoints (source/mouth)
+          // Inner points cannot create new points (neither tributary nor insert)
+          let level = 0;
+          let currentSpline = activeSpline;
+          while (currentSpline.parentId !== null) {
+            level++;
+            const parent = riverGraph.splines[currentSpline.parentId];
+            if (!parent) break;
+            currentSpline = parent as Spline;
+          }
+
+          // Block inner point operations for stream (level 2)
+          if (level >= 2) {
+            console.log('🚫 Stream inner points cannot create new nodes - only extend from endpoints');
             return;
           }
 
