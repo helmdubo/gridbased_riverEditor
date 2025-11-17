@@ -108,6 +108,7 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
               trib.points.map((p, idx) => {
                 const isMouth = idx === trib.points.length - 1;
                 const isJunction = isJunctionPoint(riverGraph, p.id);
+                const isSnapTarget = p.id === snapTargetPointId;
 
                 return (
                   <PointMarker
@@ -118,7 +119,7 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
                     isActive={activeSplineId === id}
                     isJunction={isJunction}
                     isDetached={false}
-                    isSnapTarget={false}
+                    isSnapTarget={isSnapTarget}
                     onMouseDown={() => onTributaryPointMouseDown(id, p.id, isMouth)}
                     onClick={(e) => onTributaryPointClick(e, id, p.id)}
                     onDoubleClick={(e) => onTributaryPointDoubleClick(e, id, p.id)}
@@ -134,6 +135,8 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
                 const hideAttachedMouth = isMouth && !trib.isDetached;
                 if (hideAttachedMouth) return null;
 
+                const isSnapTarget = p.id === snapTargetPointId;
+
                 return (
                   <PointMarker
                     key={`${id}-${p.id}`}
@@ -143,7 +146,7 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
                     isActive={activeSplineId === id}
                     isJunction={false}
                     isDetached={trib.isDetached}
-                    isSnapTarget={false}
+                    isSnapTarget={isSnapTarget}
                     onMouseDown={() => onTributaryPointMouseDown(id, p.id, isMouth)}
                     onClick={(e) => onTributaryPointClick(e, id, p.id)}
                     onDoubleClick={(e) => onTributaryPointDoubleClick(e, id, p.id)}

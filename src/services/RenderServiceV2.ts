@@ -511,13 +511,9 @@ export class RenderServiceV2 {
       this.renderSplineSnapHighlight(ctx, mainCache.curvePoints, options.splineSnapInfo);
     }
 
-    // Draw point snap highlight
-    if (options.snapTargetPointId) {
-      const node = graph.nodes[options.snapTargetPointId];
-      if (node) {
-        this.renderPointSnapHighlight(ctx, node.x, node.y);
-      }
-    }
+    // REMOVED: Point snap highlight (canvas ring)
+    // Snap target highlighting is now handled by SVG overlay with zoom effect
+    // This eliminates the "Saturn ring" artifact under dragged vertices
 
     // Draw all splines
     for (const [splineId, spline] of Object.entries(graph.splines)) {
@@ -616,27 +612,7 @@ export class RenderServiceV2 {
     ctx.fill();
   }
 
-  /**
-   * Render point snap highlight
-   */
-  private static renderPointSnapHighlight(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number
-  ): void {
-    // Draw pulsing circle around snap target node
-    ctx.strokeStyle = COLORS.SNAP_HIGHLIGHT;
-    ctx.fillStyle = COLORS.SNAP_HIGHLIGHT;
-    ctx.lineWidth = 3;
-
-    // Outer ring
-    ctx.beginPath();
-    ctx.arc(x, y, 12, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Inner dot
-    ctx.beginPath();
-    ctx.arc(x, y, 6, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  // REMOVED: renderPointSnapHighlight function
+  // Snap target highlighting is now handled exclusively by SVG overlay
+  // with zoom effect (same as hover), eliminating canvas-based ring artifacts
 }
