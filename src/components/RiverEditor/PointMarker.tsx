@@ -30,7 +30,9 @@ export const PointMarker: React.FC<PointMarkerProps> = ({
   onClick,
   onDoubleClick,
 }) => {
-  const radius = isHovered || isSelected || isSnapTarget ? 8 : 6;
+  // CHANGED: Use zoom highlight for snap target (same as hover)
+  // This clearly shows which vertex will interact during merge/attach
+  const radius = isHovered || isSnapTarget ? 8 : 6;
   const hitRadius = 15;
 
   let fillColor = 'white';
@@ -43,7 +45,10 @@ export const PointMarker: React.FC<PointMarkerProps> = ({
   }
 
   let strokeColor = '#ef4444';
-  if (isSelected || isSnapTarget) {
+  if (isSnapTarget) {
+    // Snap target gets golden color to indicate it's ready for interaction
+    strokeColor = '#fbbf24';
+  } else if (isSelected) {
     strokeColor = '#fbbf24';
   } else if (isJunction) {
     strokeColor = '#059669';
@@ -53,7 +58,7 @@ export const PointMarker: React.FC<PointMarkerProps> = ({
     strokeColor = '#0284c7';
   }
 
-  const strokeWidth = isHovered || isSelected || isSnapTarget ? 3 : 2;
+  const strokeWidth = isHovered || isSnapTarget ? 3 : 2;
 
   return (
     <g style={{ pointerEvents: 'auto' }}>
@@ -78,7 +83,7 @@ export const PointMarker: React.FC<PointMarkerProps> = ({
         }}
       />
 
-      {/* Visual marker */}
+      {/* Visual marker with zoom highlight for hover and snap target */}
       <circle
         cx={point.x}
         cy={point.y}
@@ -88,23 +93,6 @@ export const PointMarker: React.FC<PointMarkerProps> = ({
         strokeWidth={strokeWidth}
         style={{ pointerEvents: 'none' }}
       />
-
-      {/* Snap target indicator */}
-      {isSnapTarget && (
-        <circle
-          cx={point.x}
-          cy={point.y}
-          r={12}
-          fill="none"
-          stroke="#fbbf24"
-          strokeWidth={2}
-          strokeDasharray="4,4"
-          style={{
-            pointerEvents: 'none',
-            animation: 'dash 1s linear infinite',
-          }}
-        />
-      )}
     </g>
   );
 };

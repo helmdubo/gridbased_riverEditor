@@ -687,8 +687,8 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         setDragTempPosition(null);
       }
 
-      // OPTIMIZATION: Clear drag cache (full rebuild will happen via useEffect)
-      clearDragCache();
+      // BUGFIX: dragCache is now cleared automatically in useRiverRendererV2
+      // when geometryCache is rebuilt - this prevents jitter on release
 
       // Check if we should perform an operation
       const actualDraggedId = draggingPointId || (draggingTributaryInfo ? makeNodeId(draggingTributaryInfo.pointId) : null);
@@ -761,7 +761,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
         wasDraggingRef.current = false;
       }, 50);
     }
-  }, [draggingPointId, draggingTributaryInfo, snapTargetNode, riverGraph, mergeNodes, mergeSplines, attachSplineAsTributary, actionLogger, dragTempPosition, moveNode, clearDragCache, selectedNodeId]);
+  }, [draggingPointId, draggingTributaryInfo, snapTargetNode, riverGraph, mergeNodes, mergeSplines, attachSplineAsTributary, actionLogger, dragTempPosition, moveNode, selectedNodeId]);
 
   const handleOverlayMouseLeave = useCallback(() => {
     if (draggingPointId || draggingTributaryInfo) {
@@ -774,7 +774,9 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
       // Clear drag temp position (batching)
       setDragTempPosition(null);
 
-      // OPTIMIZATION: Clear drag cache
+      // BUGFIX: Clear drag cache manually here because riverGraph is NOT updated
+      // (drag was cancelled, not completed). In handleOverlayPointerUp we don't
+      // clear it manually because riverGraph update triggers automatic clear.
       clearDragCache();
 
       setDraggingPointId(null);
