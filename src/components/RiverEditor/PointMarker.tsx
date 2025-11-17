@@ -30,8 +30,9 @@ export const PointMarker: React.FC<PointMarkerProps> = ({
   onClick,
   onDoubleClick,
 }) => {
-  // CHANGED: Use zoom highlight for snap target (same as hover)
-  // This clearly shows which vertex will interact during merge/attach
+  // FIXED: Use zoom highlight ONLY for hover and snap target (NOT for selected)
+  // isSelected does NOT get zoom - only golden stroke
+  // isSnapTarget gets zoom + golden stroke (same visual as hover)
   const radius = isHovered || isSnapTarget ? 8 : 6;
   const hitRadius = 15;
 
@@ -83,7 +84,7 @@ export const PointMarker: React.FC<PointMarkerProps> = ({
         }}
       />
 
-      {/* Visual marker with zoom highlight for hover and snap target */}
+      {/* Visual marker with zoom highlight ONLY for hover and snap target */}
       <circle
         cx={point.x}
         cy={point.y}

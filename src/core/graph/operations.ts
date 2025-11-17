@@ -1058,6 +1058,18 @@ export function mergeNodes(
     }
   }
 
+  // BUGFIX: Move survivor node to target position
+  // This ensures that when merging nodes through snapping, the survivor
+  // always appears at the target position (where user dropped the dragged node)
+  const targetNode = newGraph.nodes[targetNodeId];
+  if (targetNode && newGraph.nodes[survivorNodeId]) {
+    newGraph.nodes[survivorNodeId] = {
+      ...newGraph.nodes[survivorNodeId],
+      x: targetNode.x,
+      y: targetNode.y,
+    };
+  }
+
   // Delete loser node
   delete newGraph.nodes[loserNodeId];
 
