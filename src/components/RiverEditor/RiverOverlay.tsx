@@ -176,16 +176,6 @@ export const RiverOverlay: React.FC<RiverOverlayProps> = ({
           />
         );
       })}
-
-      <style>
-        {`
-          @keyframes dash {
-            to {
-              stroke-dashoffset: -8;
-            }
-          }
-        `}
-      </style>
     </svg>
   );
 };
