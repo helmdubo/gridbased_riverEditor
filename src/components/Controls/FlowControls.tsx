@@ -17,6 +17,7 @@ interface FlowControlsProps {
   onShowDebugZonesChange: (show: boolean) => void;
   onArrowSpacingChange: (spacing: number) => void;
   onFlowStrengthChange: (strength: number) => void;
+  onCalculateFlow?: () => void;
 }
 
 export const FlowControls: React.FC<FlowControlsProps> = ({
@@ -32,6 +33,7 @@ export const FlowControls: React.FC<FlowControlsProps> = ({
   onShowDebugZonesChange,
   onArrowSpacingChange,
   onFlowStrengthChange,
+  onCalculateFlow,
 }) => {
   return (
     <div
@@ -48,6 +50,24 @@ export const FlowControls: React.FC<FlowControlsProps> = ({
         boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
       }}
     >
+      {onCalculateFlow && (
+        <button
+          onClick={onCalculateFlow}
+          style={{
+            padding: '6px 12px',
+            fontSize: '13px',
+            fontWeight: 'bold',
+            color: 'white',
+            backgroundColor: '#3b82f6',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+          }}
+        >
+          Calculate Flow
+        </button>
+      )}
+
       <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '13px' }}>
         <input
           type="checkbox"

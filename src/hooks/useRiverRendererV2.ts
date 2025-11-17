@@ -118,10 +118,9 @@ export const useRiverRendererV2 = (
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.restore();
 
-      // Compute flow field if needed
-      const field = options.showFlowMap || options.showFlowArrows
-        ? (flowField || computeFlowField(riverType))
-        : null;
+      // OPTIMIZATION: Only use existing flowField, don't auto-compute
+      // User must explicitly call computeFlowField() or press "Calculate Flow" button
+      const field = (options.showFlowMap || options.showFlowArrows) ? flowField : null;
 
       // Render grid with flow map (V2)
       RenderServiceV2.renderGrid(
@@ -145,7 +144,7 @@ export const useRiverRendererV2 = (
 
       console.log('✅ Render V2 complete');
     },
-    [riverGraph, geometryCache, curveData, flowField, computeFlowField, gridCols, gridRows, gridSize, mainRiverbedWidth]
+    [riverGraph, geometryCache, curveData, flowField, gridCols, gridRows, gridSize, mainRiverbedWidth]
   );
 
   // Auto-render when data changes

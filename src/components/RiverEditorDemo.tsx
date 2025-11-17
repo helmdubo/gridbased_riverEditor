@@ -233,7 +233,7 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
   };
 
   // Renderer with geometry cache + P0 bugfixes
-  const { canvasRef, geometryCache, render } = useRiverRendererV2(
+  const { canvasRef, geometryCache, render, computeFlowField } = useRiverRendererV2(
     riverGraph,
     mainRiverWidthPx,
     cols,
@@ -867,6 +867,22 @@ export const RiverEditorDemo: React.FC<RiverEditorDemoProps> = ({ cols, rows, gr
 
         {/* Right column: Checkboxes */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <button
+            onClick={() => computeFlowField(riverType)}
+            style={{
+              padding: '8px 12px',
+              fontSize: '14px',
+              fontWeight: 'bold',
+              color: 'white',
+              backgroundColor: '#3b82f6',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+            }}
+          >
+            🔄 Calculate Flow
+          </button>
+
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <input
               type="checkbox"
