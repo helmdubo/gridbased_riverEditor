@@ -244,3 +244,103 @@
 - добавить junction solver с явной стратегией (miter/bevel + miter limit);
 - расширить preview/debug слой, чтобы артист понимал решения алгоритма;
 - держать результат воспроизводимым между машинами и запусками.
+
+## Non-Destructive pipeline для Blender 4/5: как реализовать
+
+Короткий ответ: **да, это возможно**. Для вашей задачи лучше строить гибрид: вычисления в Geometry Nodes + Python оператор/менеджер для подготовки данных и UX.
+
+### Целевая архитектура (production)
+
+1. **Source Mesh (Editable)**
+   - Базовая геометрия, где артист делает boolean, bevel, cut и т.д.
+2. **Analyzer Stage (read-only)**
+   - Считывает evaluated mesh (после модификаторов) через depsgraph.
+   - Вычисляет islands/chains/junction метаданные.
+3. **Plan Stage (immutable plan data)**
+   - Формирует `DecalStripPlan`/`UVPlan` (не меш, а план генерации).
+   - Кэшируется по topology fingerprint.
+4. **Generator Stage (GN Modifier Group)**
+   - Генерирует trim/corner/seam ленты процедурно в отдельном объекте.
+   - Обновляется live при изменении source mesh.
+5. **Bake/Commit Stage (optional)**
+   - По кнопке переводит procedural результат в real mesh для экспорта.
+
+### Почему через evaluated mesh
+
+Если артист применяет Boolean/Solidify/Array, то ваш алгоритм должен видеть **финальную форму после modifier stack**. Это достигается через evaluated depsgraph, а не через raw edit bmesh.
+
+### Что должно жить в Geometry Nodes
+
+- Построение лент из кривых/edge paths.
+- Extrude по profile width/height.
+- Cap/miter/bevel switch на junction.
+- UV parametrization по длине сегмента (U = accumulated length).
+
+Это даёт realtime реакцию на boolean-правки без destructive rebuild.
+
+### Что оставить в Python
+
+- Сложный graph analysis (chain builder, junction classification, seam-vs-corner решения).
+- Умные diagnostics и отчёт об ошибках.
+- Пресеты, batch режимы, orchestration нескольких объектов.
+- Версионирование параметров и миграция между версиями аддона.
+
+### Формат данных между Python и GN
+
+Рекомендуемо передавать не «готовый mesh», а **атрибуты/кривые-планы**:
+- spline id
+- point order
+- strip type (`top/bottom/corner/seam`)
+- width/offset profile
+- join strategy (`miter|bevel|round`)
+- uv lane id
+
+Практически: хранить это в отдельном data-object (Curve/Mesh с custom attributes), который читает GN modifier.
+
+### Live update стратегия (чтобы не лагало)
+
+- Topology fingerprint (число вершин/рёбер + hash индексов + bounds).
+- Если fingerprint не менялся — обновлять только параметры, без полного re-analysis.
+- Debounce пересчёта (например 100–200 ms) во время активного интерактива.
+- Incremental rebuild: пересчитывать только затронутые chains/junctions.
+
+### Как обеспечить non-destructive UV
+
+- Не перезаписывать основной UV map сразу.
+- Создавать UV layer `HOTSPOT_PREVIEW` для preview и сравнения.
+- Кнопка `Commit to UVMap` для явного применения в production UV слой.
+- Поддержать `Revert` и snapshot backup.
+
+### Modifier UX для Blender 4/5
+
+В панели объекта:
+- `Hotspot Live` (toggle)
+- `Source Mode`: Evaluated / Edit
+- `Auto Update`: On / Manual
+- `Join Mode`: Miter / Bevel / Auto
+- `UV Mode`: Preview Layer / Commit
+- `Debug View`: Chains / Junctions / Rejected Edges
+
+### Ключевые риски и как их закрыть
+
+1. **Boolean меняет топологию радикально**  
+   Решение: устойчивый remap через spatial matching (KDTree), fallback на full rebuild.
+
+2. **Медленные сцены**  
+   Решение: LOD-анализ (сначала coarse pass), limit max edge count в live mode.
+
+3. **Нестабильный порядок рёбер после модификаторов**  
+   Решение: deterministic sorting по пространственным ключам + direction locking.
+
+4. **Самопересечения на сложных junction**  
+   Решение: miter limit + auto bevel fallback + intersection post-check.
+
+### Рекомендуемый план внедрения (без слома текущей базы)
+
+1. Ввести `Preview UV Layer` и `Commit/Revert` (быстрый выигрыш UX).
+2. Добавить evaluated-mesh анализ через depsgraph (без GN, только backend).
+3. Перенести trim strip генерацию в GN group, сохранив Python planner.
+4. Добавить junction join policies (miter/bevel/auto) + post-validator.
+5. Включить batch/object-set orchestration для level pipelines.
+
+Итог: вы получите действительно non-destructive workflow, где Boolean и другие модификаторы могут свободно меняться, а ленты и UV preview будут обновляться «на лету» с контролируемой производительностью и предсказуемым результатом.
